@@ -1,0 +1,23 @@
+[package]
+name = "bezel"
+version = "0.1.0"
+edition = "2021"
+description = "Move the pointer from Windows onto the Mac across one screen edge."
+publish = false
+license = "UNLICENSED"
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.23.2", features = ["highsierra"] }
