@@ -2,10 +2,12 @@
 //! Accessibility has to be granted to the process that launches `bezel listen`.
 
 use crate::allow::peer_allowed;
+use crate::desk::Edge;
 use crate::frame::{Frame, VERSION};
 use crate::hid::{self, mac_keycode};
 use crate::inject::{Cursor, Effect};
 use crate::net::{self, Link};
+use crate::update;
 use core_graphics::display::CGDisplay;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton,
@@ -13,8 +15,8 @@ use core_graphics::event::{
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use std::collections::BTreeSet;
-use std::io::{self, ErrorKind};
-use std::net::{IpAddr, Ipv4Addr, TcpListener};
+use std::io::{self, ErrorKind, Write};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,7 +26,7 @@ extern "C" {
     fn AXIsProcessTrusted() -> u8;
 }
 
-pub fn listen(port: u16, allow_name: &str) -> io::Result<()> {
+pub fn listen(port: u16, allow_name: &str, edge: Edge) -> io::Result<()> {
     if unsafe { AXIsProcessTrusted() == 0 } {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
@@ -32,7 +34,7 @@ pub fn listen(port: u16, allow_name: &str) -> io::Result<()> {
         ));
     }
     let ip = tailscale_ipv4()?;
-    let listener = TcpListener::bind((ip, port))?;
+    let listener = bind_listener(ip, port)?;
     eprintln!("bezel: listening on {ip}:{port} for {allow_name}");
     loop {
         let (stream, peer) = listener.accept()?;
@@ -43,16 +45,85 @@ pub fn listen(port: u16, allow_name: &str) -> io::Result<()> {
             continue;
         }
         eprintln!("bezel: connected {}", peer.ip());
-        if let Err(err) = session(stream) {
+        if let Err(err) = dispatch(stream, edge) {
             eprintln!("bezel: disconnected ({err})");
         }
     }
 }
 
-fn session(stream: std::net::TcpStream) -> io::Result<()> {
+fn bind_listener(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {
+    let tries = if std::env::var_os("BEZEL_RESTART").is_some() {
+        50
+    } else {
+        1
+    };
+    let mut last = None;
+    for _ in 0..tries {
+        match TcpListener::bind((ip, port)) {
+            Ok(listener) => return Ok(listener),
+            Err(err) => {
+                last = Some(err);
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| io::Error::new(ErrorKind::AddrInUse, "bind")))
+}
+
+fn dispatch(mut stream: TcpStream, edge: Edge) -> io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    if is_update(&stream)? {
+        stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+        return accept_update(&mut stream);
+    }
+    let _ = stream.set_read_timeout(None);
+    session(stream, edge)
+}
+
+fn is_update(stream: &TcpStream) -> io::Result<bool> {
+    let mut buf = [0u8; 4];
+    let n = match stream.peek(&mut buf) {
+        Ok(n) => n,
+        Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {
+            return Ok(false);
+        }
+        Err(err) if err.kind() == ErrorKind::Interrupted => return is_update(stream),
+        Err(err) => return Err(err),
+    };
+    if n < 4 {
+        thread::sleep(Duration::from_millis(20));
+        match stream.peek(&mut buf) {
+            Ok(n) if n >= 4 => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(&buf == update::MAGIC)
+}
+
+fn accept_update(stream: &mut TcpStream) -> io::Result<()> {
+    let root = update::source_root();
+    std::fs::create_dir_all(&root)?;
+    match update::take(stream, &root) {
+        Ok(()) => {
+            let _ = stream.write_all(b"ok\n");
+            let _ = stream.flush();
+            eprintln!("bezel: updated");
+            update::restart(&root)
+        }
+        Err(err) => {
+            let msg = format!("err {err}\n");
+            let _ = stream.write_all(msg.as_bytes());
+            let _ = stream.flush();
+            eprintln!("bezel: update failed ({err})");
+            Err(err)
+        }
+    }
+}
+
+fn session(stream: TcpStream, edge: Edge) -> io::Result<()> {
     let mut link = Link::new(stream)?;
     let (width, height, scale) = display();
-    let mut cursor = Cursor::new(width, height);
+    let mut cursor = Cursor::new(width, height, edge);
     let mut held_keys = BTreeSet::new();
     let mut held_buttons = BTreeSet::new();
     let mut last_beat = Instant::now();

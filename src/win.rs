@@ -2,7 +2,7 @@
 //! They do not touch the socket. Raw input is read on this thread.
 
 use crate::ballistics::Ballistics;
-use crate::desk::{Desk, Mon};
+use crate::desk::{Desk, Edge, Mon};
 use crate::frame::{Frame, VERSION};
 use crate::hid;
 use crate::machine::{Action, Event, Machine};
@@ -82,13 +82,13 @@ struct Session {
     announced: bool,
 }
 
-pub fn run(host: &str, port: u16, scale: f64) -> io::Result<()> {
+pub fn run(host: &str, port: u16, scale: f64, edge: Edge) -> io::Result<()> {
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let desk = monitors().unwrap_or_else(|_| crate::desk::darwin_desk());
     let (tx, rx) = mpsc::channel();
     let mut session = Session {
         desk,
-        machine: Machine::new(),
+        machine: Machine::new(edge),
         ballistics: Ballistics::new(mouse_speed()),
         scaler: Scaler::new(scale),
         link: None,

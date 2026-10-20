@@ -1,6 +1,8 @@
-//! Mac-side cursor. Motion is applied here. Crossing back through x < 0
-//! sends Leave. CoreGraphics posting stays in the macOS module.
+//! Mac-side cursor. Motion is applied here. The pointer arrives on the edge
+//! that faces Windows and sends Leave when it crosses back through that edge.
+//! CoreGraphics posting stays in the macOS module.
 
+use crate::desk::Edge;
 use crate::frame::Frame;
 use std::collections::BTreeSet;
 
@@ -10,6 +12,7 @@ pub struct Cursor {
     y: f64,
     w: f64,
     h: f64,
+    edge: Edge,
     active: bool,
     held_keys: BTreeSet<u16>,
     held_buttons: BTreeSet<u8>,
@@ -25,12 +28,15 @@ pub enum Effect {
 }
 
 impl Cursor {
-    pub fn new(w: f64, h: f64) -> Self {
+    pub fn new(w: f64, h: f64, edge: Edge) -> Self {
+        let w = w.max(1.0);
+        let h = h.max(1.0);
         Self {
-            x: 1.0,
+            x: arrive_x(edge, w),
             y: 0.0,
-            w: w.max(1.0),
-            h: h.max(1.0),
+            w,
+            h,
+            edge,
             active: false,
             held_keys: BTreeSet::new(),
             held_buttons: BTreeSet::new(),
@@ -41,7 +47,7 @@ impl Cursor {
         match frame {
             Frame::Enter { y, span, .. } => {
                 self.active = true;
-                self.x = 1.0;
+                self.x = arrive_x(self.edge, self.w);
                 self.y = map_y(y, span, self.h);
                 vec![Effect::Place { x: self.x, y: self.y }]
             }
@@ -80,17 +86,23 @@ impl Cursor {
     fn slide(&mut self, dx: i16, dy: i16) -> Vec<Effect> {
         self.x += f64::from(dx);
         self.y = (self.y + f64::from(dy)).clamp(0.0, self.h - 1.0);
-        if self.x < 0.0 {
+        if self.past_facing() {
             self.active = false;
-            self.x = 0.0;
+            self.x = facing_x(self.edge, self.w);
             let mut effects = vec![Effect::Send(Frame::Leave)];
             effects.extend(self.ups());
             return effects;
         }
-        if self.x > self.w - 1.0 {
-            self.x = self.w - 1.0;
-        }
+        self.x = self.x.clamp(0.0, self.w - 1.0);
         vec![Effect::Place { x: self.x, y: self.y }]
+    }
+
+    fn past_facing(&self) -> bool {
+        match self.edge {
+            // Windows is on the right, so the Mac's facing edge is its right edge.
+            Edge::Left => self.x > self.w - 1.0,
+            Edge::Right => self.x < 0.0,
+        }
     }
 
     fn ups(&mut self) -> Vec<Effect> {
@@ -111,6 +123,20 @@ impl Cursor {
     }
 }
 
+fn arrive_x(edge: Edge, w: f64) -> f64 {
+    match edge {
+        Edge::Left => (w - 2.0).max(0.0),
+        Edge::Right => 1.0_f64.min(w - 1.0),
+    }
+}
+
+fn facing_x(edge: Edge, w: f64) -> f64 {
+    match edge {
+        Edge::Left => w - 1.0,
+        Edge::Right => 0.0,
+    }
+}
+
 fn map_y(y: u16, span: u16, height: f64) -> f64 {
     if span == 0 {
         return 0.0;
@@ -124,8 +150,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn moving_off_the_left_edge_sends_leave() {
-        let mut cursor = Cursor::new(1800.0, 1169.0);
+    fn moving_off_the_right_edge_sends_leave() {
+        let mut cursor = Cursor::new(1800.0, 1169.0, Edge::Left);
+        cursor.apply(Frame::Enter {
+            seq: 1,
+            y: 100,
+            span: 1200,
+        });
+        let stay = cursor.apply(Frame::RelMove { dx: -10, dy: 0 });
+        assert!(matches!(stay[0], Effect::Place { x, .. } if (x - 1788.0).abs() < 0.01));
+        let back = cursor.apply(Frame::RelMove { dx: 20, dy: 0 });
+        assert!(back.contains(&Effect::Send(Frame::Leave)));
+        let ignored = cursor.apply(Frame::RelMove { dx: 5, dy: 0 });
+        assert!(ignored.is_empty());
+    }
+
+    #[test]
+    fn moving_off_the_facing_left_edge_sends_leave() {
+        let mut cursor = Cursor::new(1800.0, 1169.0, Edge::Right);
         cursor.apply(Frame::Enter {
             seq: 1,
             y: 100,
@@ -133,15 +175,13 @@ mod tests {
         });
         let stay = cursor.apply(Frame::RelMove { dx: 10, dy: 0 });
         assert!(matches!(stay[0], Effect::Place { x, .. } if (x - 11.0).abs() < 0.01));
-        let left = cursor.apply(Frame::RelMove { dx: -20, dy: 0 });
-        assert!(left.contains(&Effect::Send(Frame::Leave)));
-        let ignored = cursor.apply(Frame::RelMove { dx: 5, dy: 0 });
-        assert!(ignored.is_empty());
+        let back = cursor.apply(Frame::RelMove { dx: -20, dy: 0 });
+        assert!(back.contains(&Effect::Send(Frame::Leave)));
     }
 
     #[test]
     fn release_posts_a_held_key_up() {
-        let mut cursor = Cursor::new(100.0, 100.0);
+        let mut cursor = Cursor::new(100.0, 100.0, Edge::Left);
         cursor.apply(Frame::Enter {
             seq: 1,
             y: 0,

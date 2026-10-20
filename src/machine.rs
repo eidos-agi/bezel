@@ -1,7 +1,7 @@
 //! Who owns the pointer. Pending does not swallow input. A dead peer cannot
 //! capture the mouse. Giving up ownership emits a key-up for every held key.
 
-use crate::desk::Desk;
+use crate::desk::{Desk, Edge};
 use crate::frame::Frame;
 use crate::hid;
 use std::collections::BTreeSet;
@@ -88,10 +88,11 @@ pub struct Machine {
     move_dy: i32,
     park_x: i32,
     park_y: i32,
+    edge: Edge,
 }
 
 impl Machine {
-    pub fn new() -> Self {
+    pub fn new(edge: Edge) -> Self {
         Self {
             mode: Mode::Local,
             held_keys: BTreeSet::new(),
@@ -106,6 +107,7 @@ impl Machine {
             move_dy: 0,
             park_x: 0,
             park_y: 0,
+            edge,
         }
     }
 
@@ -162,7 +164,7 @@ impl Machine {
             }
             Mode::Pending => Vec::new(),
             Mode::Local => {
-                if self.peer_up && desk.arms(x, y, dx) {
+                if self.peer_up && desk.arms(self.edge, x, y, dx) {
                     self.begin_pending(desk, y, now)
                 } else {
                     Vec::new()
@@ -172,7 +174,7 @@ impl Machine {
     }
 
     fn begin_pending(&mut self, desk: &Desk, y: i32, now: u64) -> Vec<Action> {
-        let Some(crossing) = desk.crossing(y) else {
+        let Some(crossing) = desk.crossing(self.edge, y) else {
             return Vec::new();
         };
         let seq = self.next_seq;
@@ -323,7 +325,7 @@ impl Machine {
 
 impl Default for Machine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Edge::Left)
     }
 }
 
@@ -334,7 +336,7 @@ fn clamp_i16(value: i32) -> i16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desk::darwin_desk;
+    use crate::desk::{darwin_desk, Edge};
     use crate::frame::Frame;
     use crate::hid::LEFT_SHIFT;
 
@@ -353,9 +355,9 @@ mod tests {
         machine.handle(Event::PeerUp { now: 0 }, &desk);
         let actions = machine.handle(
             Event::Pointer {
-                x: 1919,
+                x: -7280,
                 y: 100,
-                dx: 2,
+                dx: -2,
                 dy: 0,
                 now: 10,
             },
@@ -373,13 +375,13 @@ mod tests {
     #[test]
     fn pending_without_ack_stays_local() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         machine.handle(Event::PeerUp { now: 0 }, &desk);
         machine.handle(
             Event::Pointer {
-                x: 1919,
+                x: -7280,
                 y: 400,
-                dx: 1,
+                dx: -1,
                 dy: 0,
                 now: 10,
             },
@@ -395,7 +397,7 @@ mod tests {
 
     #[test]
     fn ack_hides_the_cursor() {
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         enter(&mut machine);
         assert_eq!(machine.mode(), Mode::Remote);
         assert!(machine.swallow());
@@ -404,13 +406,13 @@ mod tests {
     #[test]
     fn stale_ack_does_not_enter() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         machine.handle(Event::PeerUp { now: 0 }, &desk);
         machine.handle(
             Event::Pointer {
-                x: 1919,
+                x: -7280,
                 y: 10,
-                dx: 1,
+                dx: -1,
                 dy: 0,
                 now: 5,
             },
@@ -423,7 +425,7 @@ mod tests {
     #[test]
     fn shift_down_then_disconnect_releases_shift() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         enter(&mut machine);
         machine.handle(
             Event::Key {
@@ -450,7 +452,7 @@ mod tests {
     #[test]
     fn missed_heartbeat_returns_local() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         enter(&mut machine);
         machine.handle(Event::Tick { now: 619 }, &desk);
         assert_eq!(machine.mode(), Mode::Remote);
@@ -464,7 +466,7 @@ mod tests {
     #[test]
     fn remote_motion_flushes_once_per_tick() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         enter(&mut machine);
         machine.handle(
             Event::Pointer {
@@ -493,7 +495,7 @@ mod tests {
     #[test]
     fn a_repeated_key_down_is_sent_once() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         enter(&mut machine);
         let first = machine.handle(
             Event::Key {
@@ -518,7 +520,7 @@ mod tests {
     #[test]
     fn local_motion_off_the_edge_sends_nothing() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         machine.handle(Event::PeerUp { now: 0 }, &desk);
         let actions = machine.handle(
             Event::Pointer {
@@ -537,12 +539,12 @@ mod tests {
     #[test]
     fn dead_peer_does_not_arm() {
         let desk = darwin_desk();
-        let mut machine = Machine::new();
+        let mut machine = Machine::new(Edge::Left);
         let actions = machine.handle(
             Event::Pointer {
-                x: 1919,
+                x: -7280,
                 y: 100,
-                dx: 5,
+                dx: -5,
                 dy: 0,
                 now: 10,
             },
