@@ -278,6 +278,7 @@ impl Machine {
             self.mode = Mode::Local;
             self.move_dx = 0;
             self.move_dy = 0;
+            actions.push(Action::Note("enter-timeout"));
         }
         if self.mode == Mode::Remote && (self.move_dx != 0 || self.move_dy != 0) {
             actions.push(Action::Send(Frame::RelMove {
@@ -413,8 +414,11 @@ mod tests {
         assert!(!machine.swallow());
         machine.handle(Event::Tick { now: 159 }, &desk);
         assert_eq!(machine.mode(), Mode::Pending);
-        machine.handle(Event::Tick { now: 160 }, &desk);
+        let actions = machine.handle(Event::Tick { now: 160 }, &desk);
         assert_eq!(machine.mode(), Mode::Local);
+        assert!(actions
+            .iter()
+            .any(|action| action == &Action::Note("enter-timeout")));
     }
 
     #[test]

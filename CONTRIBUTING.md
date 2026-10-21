@@ -40,6 +40,7 @@ bezel is a headless CLI. There is no window and no MCP server.
 2. **Errors on stderr, data on stdout.** Diagnostics go to stderr. An agent can pipe stdout.
 3. **Exit codes.** `0` is success. A non-zero exit is failure, and the stderr line says what to do next.
 4. **The binary is the interface.** Agents install a release binary. They do not need a Rust toolchain on the machine that runs it.
+5. **Problems go to GitHub issues.** Windows and the Mac both file on https://github.com/eidos-agi/bezel/issues. A failure stays out of the local log alone.
 
 ## Pull requests
 
@@ -49,6 +50,8 @@ bezel is a headless CLI. There is no window and no MCP server.
 - Ensure `cargo test --locked` passes
 
 ## Reporting issues
+
+Windows and the Mac file a problem on this tracker when it happens. The title is `bezel: <kind>`. An open issue with that title gets a comment instead of a second issue. `bezel report <text>` files one immediately. The request uses `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. The token is never printed.
 
 Open an issue with:
 

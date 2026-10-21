@@ -32,6 +32,7 @@ fn run() -> io::Result<()> {
             Ok(())
         }
         Some("inbox") => inbox_cmd(&args[1..]),
+        Some("report") => report_cmd(&args[1..]),
         Some("fake") => {
             let port = flag_u16(&args[1..], "--port")?.unwrap_or(DEFAULT_PORT);
             fake::listen(port)
@@ -112,6 +113,14 @@ fn update(args: &[String]) -> io::Result<()> {
     }
     println!("bezel: {reply}");
     Ok(())
+}
+
+fn report_cmd(args: &[String]) -> io::Result<()> {
+    let rest = without_config(args);
+    if rest.is_empty() {
+        return Err(io::Error::new(ErrorKind::InvalidInput, "missing problem"));
+    }
+    bezel::report::file_now("report", &rest.join(" "))
 }
 
 fn inbox_cmd(args: &[String]) -> io::Result<()> {
@@ -256,6 +265,7 @@ bezel inbox
 bezel inbox add <text>
 bezel inbox update <id> <text>
 bezel inbox delete <id>
+bezel report <text>
 bezel upgrade
 bezel update
 bezel fake [--port {DEFAULT_PORT}]
@@ -264,6 +274,7 @@ Settings: {path}
 Flags override the file until the file is saved again. Windows sends the edge on the connection.
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
 bezel who prints the stable name of this machine. bezel inbox changes the shared messages.
+Windows and the Mac each file a GitHub issue when a problem happens. bezel report files one now.
 bezel update sends this tree to the Mac, which builds it and restarts listen.
 
 Ctrl becomes Command. Alt becomes Option. Shift stays Shift.

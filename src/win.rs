@@ -201,6 +201,10 @@ fn tick(session: &mut Session) {
             .map(|at| at.elapsed() > Duration::from_secs(2))
             .unwrap_or(false);
     if handshake_late {
+        crate::report::submit(
+            "handshake-timeout",
+            "Hello got no HelloAck within 2 seconds.",
+        );
         fail_link(session);
         return;
     }
@@ -219,7 +223,13 @@ fn pump(session: &mut Session) {
                 dispatch(session, frame);
             }
         }
-        Err(_) => fail_link(session),
+        Err(err) => {
+            crate::report::submit(
+                "session-dropped",
+                &format!("The connection closed ({err})."),
+            );
+            fail_link(session);
+        }
     }
 }
 
@@ -305,7 +315,15 @@ fn enact(session: &mut Session, event: Event) {
                 }
                 show_cursor(&mut session.hidden, false);
             }
-            Action::Note(word) => eprintln!("bezel: {word}"),
+            Action::Note(word) => {
+                eprintln!("bezel: {word}");
+                if word == "enter-timeout" {
+                    crate::report::submit(
+                        "enter-timeout",
+                        "Enter was sent and no EnterAck arrived within 150ms. The pointer stayed here.",
+                    );
+                }
+            }
         }
     }
     SWALLOW.store(session.machine.swallow(), Ordering::SeqCst);
@@ -344,6 +362,7 @@ fn fail_link(session: &mut Session) {
     if !was_up {
         return;
     }
+    crate::report::submit("session-dropped", "The connection closed while sending.");
     let now = now_ms(session.started);
     let actions = session.machine.handle(Event::PeerDown { now }, &session.desk);
     for action in actions {

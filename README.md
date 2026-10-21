@@ -56,6 +56,12 @@ A listener from before this build has no edge frame. Windows sees that in the he
 
 `bezel who` prints this machine's name. The name is hashed from the operating system id, so the same computer keeps it. `bezel inbox` lists messages in `inbox.txt` next to the settings file. `bezel inbox add`, `update`, and `delete` change that file. While `bezel --to` and `bezel listen` are connected, each side picks up the other's changes. A message records who wrote it and who it is for. An older bezel on the other end never sees these frames.
 
+## Problems
+
+Windows and the Mac each file a problem on [the issue tracker](https://github.com/eidos-agi/bezel/issues). An Enter that gets no answer, a hello that gets no answer, a dropped connection, and a refused peer each use a stable title, `bezel: <kind>`. An open issue with that title gets a comment. Each running copy files a kind once. `bezel report <text>` files what this machine just saw.
+
+The request uses `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. The token is not printed. With no token, bezel prints `bezel: problem not filed (no GitHub token)` and keeps running.
+
 ## Update
 
 A published release is how a running copy updates. The controller and the Mac both notice it and wait for `bezel upgrade`. Neither machine installs a release on its own, and neither sends the new binary to the other.

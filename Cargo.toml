@@ -1,6 +1,6 @@
 [package]
 name = "bezel"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Move the pointer from Windows onto the Mac across one screen edge."
 publish = false

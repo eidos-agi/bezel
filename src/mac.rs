@@ -47,11 +47,19 @@ pub fn listen(port: u16, allow_name: &str, upgrade: bool, settings: &Path) -> io
         let allowed_ips: Vec<IpAddr> = allowed.into_iter().map(|addr| addr.ip()).collect();
         if !peer_allowed(peer.ip(), &allowed_ips) {
             eprintln!("bezel: refused {}", peer.ip());
+            crate::report::submit(
+                "peer-refused",
+                "A connection was refused because it was not the allowed Windows machine.",
+            );
             continue;
         }
         eprintln!("bezel: connected {}", peer.ip());
         if let Err(err) = dispatch(stream, settings) {
             eprintln!("bezel: disconnected ({err})");
+            crate::report::submit(
+                "session-dropped",
+                &format!("The connection closed ({err})."),
+            );
         }
     }
 }

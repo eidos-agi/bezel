@@ -11,6 +11,7 @@ pub mod inbox;
 pub mod inject;
 pub mod machine;
 pub mod net;
+pub mod report;
 pub mod scale;
 pub mod settings;
 pub mod update;

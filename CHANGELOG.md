@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-21
+
+### Added
+
+- Windows and the Mac each file a GitHub issue when a problem happens. `bezel report` files one from either machine. An open issue with the same title gets a comment.
+
 ## [0.1.4] - 2026-10-21
 
 ### Fixed
