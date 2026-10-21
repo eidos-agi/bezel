@@ -1,19 +1,18 @@
-//! Both machines ask the GitHub release for a newer binary and replace themselves.
-//! The controller does this, and so does the machine it controls.
+//! Both machines ask the GitHub release for a newer binary and say so.
+//! `bezel upgrade` is what installs it.
 
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const REPO: &str = "eidos-agi/bezel";
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-const READY_WAIT: Duration = Duration::from_secs(15);
 
-static STAGED: Mutex<Option<PathBuf>> = Mutex::new(None);
+static OFFERED: Mutex<Option<Version>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
@@ -100,47 +99,45 @@ pub fn looks_like_binary(bytes: &[u8]) -> bool {
     mz || macho
 }
 
-pub fn pending() -> bool {
-    staged().is_some()
-}
-
-pub fn signal_ready() {
-    let Ok(path) = std::env::var("BEZEL_READY_FILE") else {
-        return;
-    };
-    let _ = fs::write(path, b"ready\n");
-}
-
-pub fn skip_upgrade() -> bool {
-    std::env::var_os("BEZEL_SKIP_UPGRADE").is_some()
-}
-
-/// Check soon, then every six hours. A newer binary is staged for the idle loop.
-/// A process that was just replaced waits one interval before checking again.
+/// Check soon, then every six hours. A newer release is printed once. Nothing is installed.
 pub fn watch() {
-    thread::spawn(|| {
-        if skip_upgrade() {
-            thread::sleep(CHECK_EVERY);
+    thread::spawn(|| loop {
+        if let Err(err) = offer() {
+            eprintln!("bezel: upgrade check failed ({err})");
         }
-        loop {
-            if let Err(err) = stage_newer() {
-                eprintln!("bezel: upgrade check failed ({err})");
-            }
-            thread::sleep(CHECK_EVERY);
-        }
+        thread::sleep(CHECK_EVERY);
     });
 }
 
-pub fn stage_newer() -> io::Result<()> {
-    if pending() {
-        return Ok(());
-    }
+pub fn offer() -> io::Result<()> {
     let Some(expected) = expected_asset() else {
         return Ok(());
     };
-    let Some((version, url)) = newer_release(expected)? else {
+    let Some((version, _)) = newer_release(expected)? else {
         return Ok(());
     };
+    let mut offered = OFFERED.lock().unwrap_or_else(|err| err.into_inner());
+    if *offered == Some(version) {
+        return Ok(());
+    }
+    *offered = Some(version);
+    eprintln!("bezel: {version} is available. Run bezel upgrade");
+    Ok(())
+}
+
+/// Install the newer release binary over this one. The user starts bezel again.
+pub fn install() -> io::Result<()> {
+    let expected = expected_asset().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::Unsupported,
+            "there is no release binary for this machine",
+        )
+    })?;
+    let Some((version, url)) = newer_release(expected)? else {
+        println!("bezel: {} is the latest release", current_version());
+        return Ok(());
+    };
+    eprintln!("bezel: installing {version}");
     let path = download(&url)?;
     let bytes = fs::read(&path)?;
     if bytes.len() < 65_536 || !looks_like_binary(&bytes) {
@@ -150,41 +147,12 @@ pub fn stage_newer() -> io::Result<()> {
             "the release asset is not a bezel binary",
         ));
     }
-    *lock() = Some(path);
-    eprintln!(
-        "bezel: upgrade {} -> {version} ready",
-        current_version()
-    );
-    Ok(())
-}
-
-/// Replace this process with the staged binary. On success the process exits.
-pub fn apply_staged() -> io::Result<()> {
-    let Some(staged_path) = lock().take() else {
-        return Ok(());
-    };
-    let backup = swap_in(&staged_path)?;
-    let ready = std::env::temp_dir().join(format!("bezel-ready-{}", std::process::id()));
-    let _ = fs::remove_file(&ready);
-    let mut child = match spawn_replacement(&ready) {
-        Ok(child) => child,
-        Err(err) => {
-            restore(&backup)?;
-            return Err(err);
-        }
-    };
-    if wait_ready(&ready, &mut child) {
-        let _ = fs::remove_file(&ready);
-        std::process::exit(0);
+    if let Err(err) = swap_in(&path) {
+        let _ = fs::remove_file(&path);
+        return Err(err);
     }
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = fs::remove_file(&ready);
-    restore(&backup)?;
-    Err(io::Error::new(
-        ErrorKind::Other,
-        "the new binary did not start, so this one is still running",
-    ))
+    println!("bezel: installed {version}. Start bezel again.");
+    Ok(())
 }
 
 fn newer_release(expected: &str) -> io::Result<Option<(Version, String)>> {
@@ -211,33 +179,6 @@ fn download(url: &str) -> io::Result<PathBuf> {
     Ok(dest)
 }
 
-fn spawn_replacement(ready: &Path) -> io::Result<Child> {
-    let current = std::env::current_exe()?;
-    let mut cmd = Command::new(&current);
-    cmd.args(std::env::args().skip(1))
-        .env("BEZEL_SKIP_UPGRADE", "1")
-        .env("BEZEL_RESTART", "1")
-        .env("BEZEL_READY_FILE", ready)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    cmd.spawn()
-}
-
-fn wait_ready(path: &Path, child: &mut Child) -> bool {
-    let started = Instant::now();
-    while started.elapsed() < READY_WAIT {
-        if path.is_file() {
-            return true;
-        }
-        if let Ok(Some(_)) = child.try_wait() {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    false
-}
-
 fn swap_in(downloaded: &Path) -> io::Result<PathBuf> {
     let current = std::env::current_exe()?;
     let backup = current.with_file_name("bezel.previous");
@@ -259,33 +200,6 @@ fn swap_in(downloaded: &Path) -> io::Result<PathBuf> {
         fs::set_permissions(&current, fs::Permissions::from_mode(0o755))?;
     }
     Ok(backup)
-}
-
-fn restore(backup: &Path) -> io::Result<()> {
-    let current = std::env::current_exe()?;
-    #[cfg(windows)]
-    {
-        let _ = backup;
-        let retired = current.with_file_name("bezel.retired");
-        let failed = current.with_file_name("bezel.failed");
-        let _ = fs::rename(&current, &failed);
-        fs::rename(&retired, &current)?;
-        let _ = fs::remove_file(&failed);
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        fs::copy(backup, &current)?;
-        Ok(())
-    }
-}
-
-fn staged() -> Option<PathBuf> {
-    lock().clone()
-}
-
-fn lock() -> std::sync::MutexGuard<'static, Option<PathBuf>> {
-    STAGED.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 fn curl_text(url: &str) -> io::Result<String> {

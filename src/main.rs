@@ -25,6 +25,7 @@ fn run() -> io::Result<()> {
         }
         Some("listen") => listen(&args[1..]),
         Some("update") => update(&args[1..]),
+        Some("upgrade") => bezel::upgrade::install(),
         Some("fake") => {
             let port = flag_u16(&args[1..], "--port")?.unwrap_or(DEFAULT_PORT);
             fake::listen(port)
@@ -168,12 +169,13 @@ fn print_usage() {
         "\
 bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--no-upgrade]
 bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--no-upgrade]
+bezel upgrade
 bezel update
 bezel fake [--port {DEFAULT_PORT}]
 
 Settings: {path}
 Flags override the file until the file is saved again. Windows sends the edge on the connection.
-Both machines replace themselves from the latest GitHub release binary. --no-upgrade stays on this copy.
+A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
 bezel update sends this tree to the Mac, which builds it and restarts listen.
 
 Ctrl becomes Command. Alt becomes Option. Shift stays Shift.

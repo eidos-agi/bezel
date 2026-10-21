@@ -11,7 +11,7 @@ Windows owns the mouse and keyboard. The Mac only injects. Clipboard, file drag,
 
 Download the binary for this machine from the [latest release](https://github.com/eidos-agi/bezel/releases/latest).
 
-`bezel listen` on the Mac and `bezel --to` on Windows each ask that release for a newer binary and replace themselves when one is published. The replacement waits until the pointer is on Windows, or until the Mac has no open session. `--no-upgrade` keeps the binary that is already running.
+`bezel listen` on the Mac and `bezel --to` on Windows each check that release. When a newer one exists they print `bezel: VERSION is available. Run bezel upgrade`. `bezel upgrade` installs it. Start bezel again after that. `--no-upgrade` stays quiet.
 
 The release is three binaries: `bezel-x86_64-pc-windows-msvc.exe`, `bezel-aarch64-apple-darwin`, and `bezel-x86_64-apple-darwin`.
 
@@ -54,7 +54,7 @@ A listener from before this build has no edge frame. Windows sees that in the he
 
 ## Update
 
-A published release is how a running copy updates. The controller and the Mac both request it from `eidos-agi/bezel`. Neither machine sends the new binary to the other.
+A published release is how a running copy updates. The controller and the Mac both notice it and wait for `bezel upgrade`. Neither machine installs a release on its own, and neither sends the new binary to the other.
 
 `bezel update` still sends this source tree over the Tailscale connection. The Mac runs `cargo build --release` and restarts `bezel listen`. A listener from before that command closes the connection instead of building. The release binary is the path a machine uses on its own.
 

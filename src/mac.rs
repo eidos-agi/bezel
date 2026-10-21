@@ -37,31 +37,10 @@ pub fn listen(port: u16, allow_name: &str, upgrade: bool) -> io::Result<()> {
         crate::upgrade::watch();
     }
     let ip = tailscale_ipv4()?;
-    let mut listener = Some(listen_on(ip, port)?);
-    crate::upgrade::signal_ready();
+    let listener = bind_listener(ip, port)?;
     eprintln!("bezel: listening on {ip}:{port} for {allow_name}");
     loop {
-        if crate::upgrade::pending() {
-            listener.take();
-            if let Err(err) = crate::upgrade::apply_staged() {
-                eprintln!("bezel: upgrade failed ({err})");
-                listener = Some(listen_on(ip, port)?);
-            }
-            continue;
-        }
-        let Some(listen) = listener.as_ref() else {
-            continue;
-        };
-        let accepted = match listen.accept() {
-            Ok(accepted) => accepted,
-            Err(err) if accept_is_idle(&err) => {
-                thread::sleep(Duration::from_millis(200));
-                continue;
-            }
-            Err(err) => return Err(err),
-        };
-        let (mut stream, peer) = accepted;
-        stream.set_nonblocking(false)?;
+        let (stream, peer) = listener.accept()?;
         let allowed = net::resolve(allow_name, 0).unwrap_or_default();
         let allowed_ips: Vec<IpAddr> = allowed.into_iter().map(|addr| addr.ip()).collect();
         if !peer_allowed(peer.ip(), &allowed_ips) {
@@ -73,19 +52,6 @@ pub fn listen(port: u16, allow_name: &str, upgrade: bool) -> io::Result<()> {
             eprintln!("bezel: disconnected ({err})");
         }
     }
-}
-
-fn accept_is_idle(err: &io::Error) -> bool {
-    matches!(
-        err.kind(),
-        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
-    )
-}
-
-fn listen_on(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {
-    let listener = bind_listener(ip, port)?;
-    listener.set_nonblocking(true)?;
-    Ok(listener)
 }
 
 fn bind_listener(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {

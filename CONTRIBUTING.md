@@ -30,7 +30,7 @@ A version tag `vX.Y.Z` must match `version` in `Cargo.toml`. The release workflo
 - `bezel-aarch64-apple-darwin`
 - `bezel-x86_64-apple-darwin`
 
-A running `bezel --to` and a running `bezel listen` each request that release and replace themselves when the tag is newer. `--no-upgrade` keeps the copy that is already running.
+A running `bezel --to` and a running `bezel listen` each announce a newer release. `bezel upgrade` installs it. `--no-upgrade` stays quiet.
 
 ## For agent developers
 

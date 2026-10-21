@@ -5,7 +5,7 @@ use crate::ballistics::Ballistics;
 use crate::desk::{Desk, Edge, Mon};
 use crate::frame::{Frame, VERSION};
 use crate::hid;
-use crate::machine::{Action, Event, Machine, Mode};
+use crate::machine::{Action, Event, Machine};
 use crate::net::{self, Link};
 use crate::scale::Scaler;
 use std::io::{self, ErrorKind};
@@ -129,31 +129,23 @@ pub fn run(
     if upgrade {
         crate::upgrade::watch();
     }
-    loop {
-        let mouse_hook = unsafe {
-            SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
-        }
-        .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
-        let key_hook =
-            unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), HINSTANCE::default(), 0) }
-                .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
-        crate::upgrade::signal_ready();
-        let upgrade_now = event_loop(&mut session)?;
-        unsafe {
-            let _ = UnhookWindowsHookEx(mouse_hook);
-            let _ = UnhookWindowsHookEx(key_hook);
-        }
-        show_cursor(&mut session.hidden, false);
-        if !upgrade_now {
-            return Ok(());
-        }
-        if let Err(err) = crate::upgrade::apply_staged() {
-            eprintln!("bezel: upgrade failed ({err})");
-        }
+    let mouse_hook = unsafe {
+        SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
     }
+    .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
+    let key_hook =
+        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), HINSTANCE::default(), 0) }
+            .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
+    let result = event_loop(&mut session);
+    unsafe {
+        let _ = UnhookWindowsHookEx(mouse_hook);
+        let _ = UnhookWindowsHookEx(key_hook);
+    }
+    show_cursor(&mut session.hidden, false);
+    result
 }
 
-fn event_loop(session: &mut Session) -> io::Result<bool> {
+fn event_loop(session: &mut Session) -> io::Result<()> {
     let mut msg = MSG::default();
     loop {
         unsafe {
@@ -165,7 +157,7 @@ fn event_loop(session: &mut Session) -> io::Result<bool> {
                 break;
             }
             if msg.message == WM_QUIT {
-                return Ok(false);
+                return Ok(());
             }
             if msg.message == WM_INPUT {
                 take_local(session);
@@ -178,9 +170,6 @@ fn event_loop(session: &mut Session) -> io::Result<bool> {
             }
         }
         take_local(session);
-        if session.machine.mode() == Mode::Local && crate::upgrade::pending() {
-            return Ok(true);
-        }
         refresh_settings(session);
         poll_dial(session);
         pump(session);
