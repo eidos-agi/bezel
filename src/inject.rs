@@ -45,11 +45,14 @@ impl Cursor {
 
     pub fn apply(&mut self, frame: Frame) -> Vec<Effect> {
         match frame {
-            Frame::Enter { y, span, .. } => {
+            Frame::Enter { seq, y, span } => {
                 self.active = true;
                 self.x = arrive_x(self.edge, self.w);
                 self.y = map_y(y, span, self.h);
-                vec![Effect::Place { x: self.x, y: self.y }]
+                vec![
+                    Effect::Place { x: self.x, y: self.y },
+                    Effect::Send(Frame::EnterAck { seq }),
+                ]
             }
             Frame::RelMove { dx, dy } if self.active => self.slide(dx, dy),
             Frame::Button { button, down } if self.active => {
@@ -156,6 +159,21 @@ fn map_y(y: u16, span: u16, height: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enter_is_acknowledged_from_the_facing_edge() {
+        let mut cursor = Cursor::new(1800.0, 1169.0, Edge::Left);
+        let effects = cursor.apply(Frame::Enter {
+            seq: 4,
+            y: 100,
+            span: 1200,
+        });
+        assert!(effects.contains(&Effect::Send(Frame::EnterAck { seq: 4 })));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Place { x, .. } if (*x - 1798.0).abs() < 0.01
+        )));
+    }
 
     #[test]
     fn moving_off_the_right_edge_sends_leave() {

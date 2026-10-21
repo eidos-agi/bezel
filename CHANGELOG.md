@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-21
+
+### Fixed
+
+- The Mac answers when the pointer arrives. Windows then hides its cursor and the pointer travels across the Mac. Before this, both cursors stayed on the shared edge.
+
 ## [0.1.3] - 2026-10-21
 
 ### Added

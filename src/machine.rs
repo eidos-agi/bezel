@@ -170,9 +170,15 @@ impl Machine {
                 self.move_dy = self.move_dy.saturating_add(dy);
                 Vec::new()
             }
-            Mode::Pending => Vec::new(),
+            Mode::Pending => {
+                self.move_dx = self.move_dx.saturating_add(dx);
+                self.move_dy = self.move_dy.saturating_add(dy);
+                Vec::new()
+            }
             Mode::Local => {
                 if self.peer_up && desk.arms(self.edge, x, y, dx) {
+                    self.move_dx = dx;
+                    self.move_dy = dy;
                     self.begin_pending(desk, x, y, now)
                 } else {
                     Vec::new()
@@ -205,15 +211,22 @@ impl Machine {
             return Vec::new();
         }
         self.mode = Mode::Remote;
-        self.move_dx = 0;
-        self.move_dy = 0;
-        vec![
+        let mut actions = vec![
             Action::Note("entered"),
             Action::HideCursor {
                 x: self.park_x,
                 y: self.park_y,
             },
-        ]
+        ];
+        if self.move_dx != 0 || self.move_dy != 0 {
+            actions.push(Action::Send(Frame::RelMove {
+                dx: clamp_i16(self.move_dx),
+                dy: clamp_i16(self.move_dy),
+            }));
+            self.move_dx = 0;
+            self.move_dy = 0;
+        }
+        actions
     }
 
     fn button(&mut self, button: u8, down: bool, now: u64) -> Vec<Action> {
@@ -263,6 +276,8 @@ impl Machine {
         let mut actions = Vec::new();
         if self.mode == Mode::Pending && now.saturating_sub(self.pending_at) >= PENDING_MS {
             self.mode = Mode::Local;
+            self.move_dx = 0;
+            self.move_dy = 0;
         }
         if self.mode == Mode::Remote && (self.move_dx != 0 || self.move_dy != 0) {
             actions.push(Action::Send(Frame::RelMove {
@@ -400,6 +415,29 @@ mod tests {
         assert_eq!(machine.mode(), Mode::Pending);
         machine.handle(Event::Tick { now: 160 }, &desk);
         assert_eq!(machine.mode(), Mode::Local);
+    }
+
+    #[test]
+    fn the_shove_across_the_edge_is_sent_after_the_ack() {
+        let desk = darwin_desk();
+        let mut machine = Machine::new(Edge::Left);
+        machine.handle(Event::PeerUp { now: 0 }, &desk);
+        machine.handle(
+            Event::Pointer {
+                x: -7280,
+                y: 100,
+                dx: -2,
+                dy: 0,
+                now: 10,
+            },
+            &desk,
+        );
+        let actions = machine.handle(Event::EnterAck { seq: 1, now: 20 }, &desk);
+        assert!(sends(&actions).contains(&Frame::RelMove { dx: -2, dy: 0 }));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::HideCursor { .. }
+        )));
     }
 
     #[test]
