@@ -1,0 +1,72 @@
+# Attach release binaries to the GitHub Release for this tag.
+# The tag must match Cargo.toml. Machines download these assets themselves.
+# The workflow uses the short-lived GITHUB_TOKEN. No publish token is stored.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: bezel-x86_64-pc-windows-msvc.exe
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: bezel-aarch64-apple-darwin
+          - os: macos-14
+            target: x86_64-apple-darwin
+            asset: bezel-x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Tag matches Cargo.toml
+        shell: bash
+        run: |
+          version=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+          tag="${GITHUB_REF_NAME#v}"
+          test "$version" = "$tag"
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage the asset
+        shell: bash
+        run: |
+          src="target/${{ matrix.target }}/release/bezel"
+          if [ -f "$src.exe" ]; then src="$src.exe"; fi
+          cp "$src" "${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
