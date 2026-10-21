@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-21
+
+### Added
+
+- `bezel version` prints this release on its own line.
+
 ## [0.1.7] - 2026-10-21
 
 ### Added

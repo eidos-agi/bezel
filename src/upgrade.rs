@@ -326,6 +326,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn this_build_reports_its_own_release() {
+        assert_eq!(current_version().to_string(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
     fn versions_sort_as_numbers() {
         let older = Version::parse("v0.1.0").unwrap();
         let newer = Version::parse("0.1.1").unwrap();

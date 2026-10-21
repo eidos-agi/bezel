@@ -31,6 +31,10 @@ fn run() -> io::Result<()> {
             println!("{}", who::name());
             Ok(())
         }
+        Some("version") => {
+            println!("{}", bezel::upgrade::current_version());
+            Ok(())
+        }
         Some("inbox") => inbox_cmd(&args[1..]),
         Some("report") => report_cmd(&args[1..]),
         Some("fake") => {
@@ -270,6 +274,7 @@ fn print_usage() {
 bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--debug] [--no-upgrade]
 bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--debug] [--no-upgrade]
 bezel who
+bezel version
 bezel inbox
 bezel inbox add <text>
 bezel inbox update <id> <text>
@@ -282,7 +287,8 @@ bezel fake [--port {DEFAULT_PORT}]
 Settings: {path}
 Flags override the file until the file is saved again. Windows sends the edge on the connection.
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
-bezel who prints the stable name of this machine. bezel inbox changes the shared messages.
+bezel who prints the stable name of this machine. bezel version prints this release.
+bezel inbox changes the shared messages.
 Windows and the Mac each file a GitHub issue when a problem happens. bezel report files one now.
 --debug prints each key and whether it was sent. BEZEL_DEBUG=1 does the same. The lines stay on the console.
 bezel update sends this tree to the Mac, which builds it and restarts listen.
