@@ -75,8 +75,16 @@ impl Cursor {
                 vec![Effect::Key { hid, down }]
             }
             Frame::Release | Frame::Leave => self.ups(),
+            Frame::Config { edge } => {
+                self.edge = edge;
+                Vec::new()
+            }
             _ => Vec::new(),
         }
+    }
+
+    pub fn set_edge(&mut self, edge: Edge) {
+        self.edge = edge;
     }
 
     pub fn release_all(&mut self) -> Vec<Effect> {
@@ -176,6 +184,21 @@ mod tests {
         let stay = cursor.apply(Frame::RelMove { dx: 10, dy: 0 });
         assert!(matches!(stay[0], Effect::Place { x, .. } if (x - 11.0).abs() < 0.01));
         let back = cursor.apply(Frame::RelMove { dx: -20, dy: 0 });
+        assert!(back.contains(&Effect::Send(Frame::Leave)));
+    }
+
+    #[test]
+    fn a_config_frame_moves_the_facing_edge() {
+        let mut cursor = Cursor::new(1800.0, 1169.0, Edge::Right);
+        cursor.apply(Frame::Config { edge: Edge::Left });
+        cursor.apply(Frame::Enter {
+            seq: 1,
+            y: 100,
+            span: 1200,
+        });
+        let stay = cursor.apply(Frame::RelMove { dx: -10, dy: 0 });
+        assert!(matches!(stay[0], Effect::Place { x, .. } if (x - 1788.0).abs() < 0.01));
+        let back = cursor.apply(Frame::RelMove { dx: 20, dy: 0 });
         assert!(back.contains(&Effect::Send(Frame::Leave)));
     }
 

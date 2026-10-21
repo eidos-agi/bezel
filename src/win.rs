@@ -5,15 +5,16 @@ use crate::ballistics::Ballistics;
 use crate::desk::{Desk, Edge, Mon};
 use crate::frame::{Frame, VERSION};
 use crate::hid;
-use crate::machine::{Action, Event, Machine};
+use crate::machine::{Action, Event, Machine, Mode};
 use crate::net::{self, Link};
 use crate::scale::Scaler;
 use std::io::{self, ErrorKind};
 use std::mem::size_of;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -80,12 +81,26 @@ struct Session {
     rx: Receiver<Dial>,
     started: Instant,
     announced: bool,
+    settings_path: PathBuf,
+    settings_mtime: Option<SystemTime>,
+    settings_checked: Instant,
+    accepts_config: bool,
 }
 
-pub fn run(host: &str, port: u16, scale: f64, edge: Edge) -> io::Result<()> {
+pub fn run(
+    host: &str,
+    port: u16,
+    scale: f64,
+    edge: Edge,
+    settings_path: &Path,
+    upgrade: bool,
+) -> io::Result<()> {
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let desk = monitors().unwrap_or_else(|_| crate::desk::darwin_desk());
     let (tx, rx) = mpsc::channel();
+    let settings_mtime = std::fs::metadata(settings_path)
+        .and_then(|meta| meta.modified())
+        .ok();
     let mut session = Session {
         desk,
         machine: Machine::new(edge),
@@ -104,25 +119,41 @@ pub fn run(host: &str, port: u16, scale: f64, edge: Edge) -> io::Result<()> {
         rx,
         started: Instant::now(),
         announced: false,
+        settings_path: settings_path.to_path_buf(),
+        settings_mtime,
+        settings_checked: Instant::now(),
+        accepts_config: false,
     };
     let window = message_window()?;
     register_raw(window)?;
-    let mouse_hook = unsafe {
-        SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
+    if upgrade {
+        crate::upgrade::watch();
     }
-    .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
-    let key_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), HINSTANCE::default(), 0) }
+    loop {
+        let mouse_hook = unsafe {
+            SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
+        }
         .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
-    let result = event_loop(&mut session);
-    unsafe {
-        let _ = UnhookWindowsHookEx(mouse_hook);
-        let _ = UnhookWindowsHookEx(key_hook);
+        let key_hook =
+            unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), HINSTANCE::default(), 0) }
+                .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
+        crate::upgrade::signal_ready();
+        let upgrade_now = event_loop(&mut session)?;
+        unsafe {
+            let _ = UnhookWindowsHookEx(mouse_hook);
+            let _ = UnhookWindowsHookEx(key_hook);
+        }
+        show_cursor(&mut session.hidden, false);
+        if !upgrade_now {
+            return Ok(());
+        }
+        if let Err(err) = crate::upgrade::apply_staged() {
+            eprintln!("bezel: upgrade failed ({err})");
+        }
     }
-    show_cursor(&mut session.hidden, false);
-    result
 }
 
-fn event_loop(session: &mut Session) -> io::Result<()> {
+fn event_loop(session: &mut Session) -> io::Result<bool> {
     let mut msg = MSG::default();
     loop {
         unsafe {
@@ -134,7 +165,7 @@ fn event_loop(session: &mut Session) -> io::Result<()> {
                 break;
             }
             if msg.message == WM_QUIT {
-                return Ok(());
+                return Ok(false);
             }
             if msg.message == WM_INPUT {
                 take_local(session);
@@ -147,6 +178,10 @@ fn event_loop(session: &mut Session) -> io::Result<()> {
             }
         }
         take_local(session);
+        if session.machine.mode() == Mode::Local && crate::upgrade::pending() {
+            return Ok(true);
+        }
+        refresh_settings(session);
         poll_dial(session);
         pump(session);
         tick(session);
@@ -201,12 +236,24 @@ fn dispatch(session: &mut Session, frame: Frame) {
             logical_w,
             logical_h,
             scale_milli,
+            accepts_config,
         } => {
             eprintln!(
                 "bezel: mac {logical_w}x{logical_h} scale {:.2}",
                 f64::from(scale_milli) / 1000.0
             );
+            session.accepts_config = accepts_config;
             session.greeted = true;
+            let edge = session.machine.edge();
+            eprintln!("bezel: edge {}", edge.as_str());
+            if accepts_config {
+                if !try_send(session, &Frame::Config { edge }) {
+                    fail_link(session);
+                    return;
+                }
+            } else {
+                eprintln!("bezel: mac cannot take the edge yet");
+            }
             enact(session, Event::PeerUp { now });
         }
         Frame::EnterAck { seq } => enact(session, Event::EnterAck { seq, now }),
@@ -270,6 +317,7 @@ fn fail_link(session: &mut Session) {
     session.gen = session.gen.wrapping_add(1);
     session.link = None;
     session.greeted = false;
+    session.accepts_config = false;
     session.hello_at = None;
     SWALLOW.store(false, Ordering::SeqCst);
     if !was_up {
@@ -319,6 +367,56 @@ fn poll_dial(session: &mut Session) {
         let result = dial(&host, port);
         let _ = tx.send(Dial { gen, result });
     });
+}
+
+fn refresh_settings(session: &mut Session) {
+    if session.settings_checked.elapsed() < Duration::from_millis(500) {
+        return;
+    }
+    session.settings_checked = Instant::now();
+    let modified = match std::fs::metadata(&session.settings_path).and_then(|meta| meta.modified()) {
+        Ok(modified) => modified,
+        Err(_) => return,
+    };
+    // The file at startup already lost to the flags. A later save wins.
+    let Some(seen) = session.settings_mtime else {
+        session.settings_mtime = Some(modified);
+        return;
+    };
+    if modified <= seen {
+        return;
+    }
+    let file = match crate::settings::load(&session.settings_path) {
+        Ok(file) => file,
+        Err(_) => return,
+    };
+    session.settings_mtime = Some(modified);
+    if file.edge != session.machine.edge() {
+        session.machine.set_edge(file.edge);
+        eprintln!("bezel: edge {}", file.edge.as_str());
+        if session.greeted && session.accepts_config {
+            let edge = file.edge;
+            if !try_send(session, &Frame::Config { edge }) {
+                fail_link(session);
+            }
+        } else if session.greeted {
+            eprintln!("bezel: mac cannot take the edge yet");
+        }
+    }
+    let previous = session.scaler.scale();
+    session.scaler.set_scale(file.scale);
+    if session.scaler.scale() != previous {
+        eprintln!("bezel: scale {}", format_scale(session.scaler.scale()));
+    }
+}
+
+fn format_scale(scale: f64) -> String {
+    let text = format!("{scale}");
+    if text.contains('.') {
+        text
+    } else {
+        format!("{scale:.1}")
+    }
 }
 
 fn attach(session: &mut Session, stream: std::net::TcpStream) {

@@ -1,5 +1,6 @@
 //! Length-prefixed frames. The type byte is original to Bezel.
 
+use crate::desk::Edge;
 use std::convert::TryInto;
 
 pub const VERSION: u8 = 1;
@@ -16,6 +17,7 @@ const WHEEL: u8 = 8;
 const KEY: u8 = 9;
 const HEARTBEAT: u8 = 10;
 const RELEASE: u8 = 11;
+const CONFIG: u8 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Frame {
@@ -26,6 +28,12 @@ pub enum Frame {
         logical_w: u16,
         logical_h: u16,
         scale_milli: u16,
+        /// The Mac applies an edge sent by Windows. An old listener omits this.
+        accepts_config: bool,
+    },
+    /// Windows tells the Mac which edge faces it. A later frame replaces it.
+    Config {
+        edge: Edge,
     },
     Enter {
         seq: u32,
@@ -101,11 +109,19 @@ pub fn encode(frame: &Frame, out: &mut Vec<u8>) {
             logical_w,
             logical_h,
             scale_milli,
+            accepts_config,
         } => {
             body.push(HELLO_ACK);
             body.extend_from_slice(&logical_w.to_le_bytes());
             body.extend_from_slice(&logical_h.to_le_bytes());
             body.extend_from_slice(&scale_milli.to_le_bytes());
+            if accepts_config {
+                body.push(1);
+            }
+        }
+        Frame::Config { edge } => {
+            body.push(CONFIG);
+            body.push(edge.wire());
         }
         Frame::Enter { seq, y, span } => {
             body.push(ENTER);
@@ -174,13 +190,14 @@ fn decode_body(body: &[u8]) -> Result<Frame, DecodeError> {
             Ok(Frame::Hello { version })
         }
         HELLO_ACK => {
-            if rest.len() != 6 {
+            if rest.len() != 6 && rest.len() != 7 {
                 return Err(DecodeError);
             }
             Ok(Frame::HelloAck {
                 logical_w: u16::from_le_bytes(rest[0..2].try_into().unwrap()),
                 logical_h: u16::from_le_bytes(rest[2..4].try_into().unwrap()),
                 scale_milli: u16::from_le_bytes(rest[4..6].try_into().unwrap()),
+                accepts_config: rest.len() == 7 && rest[6] != 0,
             })
         }
         ENTER => {
@@ -224,6 +241,13 @@ fn decode_body(body: &[u8]) -> Result<Frame, DecodeError> {
         }
         HEARTBEAT => empty(rest, Frame::Heartbeat),
         RELEASE => empty(rest, Frame::Release),
+        CONFIG => {
+            if rest.len() != 1 {
+                return Err(DecodeError);
+            }
+            let edge = Edge::from_wire(rest[0]).ok_or(DecodeError)?;
+            Ok(Frame::Config { edge })
+        }
         _ => Err(DecodeError),
     }
 }
@@ -266,7 +290,9 @@ mod tests {
                 logical_w: 1800,
                 logical_h: 1169,
                 scale_milli: 2000,
+                accepts_config: true,
             },
+            Frame::Config { edge: Edge::Left },
             Frame::Enter {
                 seq: 7,
                 y: 400,
@@ -301,6 +327,27 @@ mod tests {
         assert!(reader.push(&bytes[..3]).unwrap().is_empty());
         let got = reader.push(&bytes[3..]).unwrap();
         assert_eq!(got, vec![Frame::Heartbeat]);
+    }
+
+    #[test]
+    fn an_old_hello_ack_cannot_take_an_edge() {
+        let mut body = vec![HELLO_ACK];
+        body.extend_from_slice(&1800u16.to_le_bytes());
+        body.extend_from_slice(&1169u16.to_le_bytes());
+        body.extend_from_slice(&1000u16.to_le_bytes());
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&body);
+        let (frame, _) = decode(&buf).unwrap().unwrap();
+        assert_eq!(
+            frame,
+            Frame::HelloAck {
+                logical_w: 1800,
+                logical_h: 1169,
+                scale_milli: 1000,
+                accepts_config: false,
+            }
+        );
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub fn answer(frame: Frame, screen: Screen) -> Option<Frame> {
             logical_w: screen.logical_w,
             logical_h: screen.logical_h,
             scale_milli: screen.scale_milli,
+            accepts_config: true,
         }),
         Frame::Enter { seq, .. } => Some(Frame::EnterAck { seq }),
         Frame::Heartbeat => Some(Frame::Heartbeat),
@@ -105,6 +106,7 @@ fn summarize(frames: &[Frame]) -> String {
             Frame::Heartbeat => "heartbeat",
             Frame::Release => "release",
             Frame::Leave => "leave",
+            Frame::Config { .. } => "config",
             _ => "other",
         };
         if parts.last().copied() != Some(name) {
@@ -152,6 +154,7 @@ mod tests {
                 logical_w: 1800,
                 logical_h: 1169,
                 scale_milli: 2000,
+                accepts_config: true,
             }
         ));
         write_frame(

@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Move the pointer from Windows onto the Mac across one screen edge."
 publish = false
-license = "UNLICENSED"
+license = "MIT"
+repository = "https://github.com/eidos-agi/bezel"
+homepage = "https://github.com/eidos-agi/bezel"
+readme = "README.md"
+keywords = ["mouse", "keyboard", "tailscale"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 

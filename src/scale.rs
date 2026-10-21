@@ -22,6 +22,18 @@ impl Scaler {
         }
     }
 
+    pub fn scale(&self) -> f64 {
+        self.scale
+    }
+
+    pub fn set_scale(&mut self, scale: f64) {
+        if scale.is_finite() && scale > 0.0 && self.scale != scale {
+            self.scale = scale;
+            self.carry_x = 0.0;
+            self.carry_y = 0.0;
+        }
+    }
+
     pub fn apply(&mut self, dx: i32, dy: i32) -> (i32, i32) {
         (self.axis(dx, true), self.axis(dy, false))
     }

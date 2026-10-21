@@ -26,18 +26,42 @@ extern "C" {
     fn AXIsProcessTrusted() -> u8;
 }
 
-pub fn listen(port: u16, allow_name: &str, edge: Edge) -> io::Result<()> {
+pub fn listen(port: u16, allow_name: &str, upgrade: bool) -> io::Result<()> {
     if unsafe { AXIsProcessTrusted() == 0 } {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
             "Accessibility permission is missing for this process. Grant it in System Settings, then start bezel listen again.",
         ));
     }
+    if upgrade {
+        crate::upgrade::watch();
+    }
     let ip = tailscale_ipv4()?;
-    let listener = bind_listener(ip, port)?;
+    let mut listener = Some(listen_on(ip, port)?);
+    crate::upgrade::signal_ready();
     eprintln!("bezel: listening on {ip}:{port} for {allow_name}");
     loop {
-        let (stream, peer) = listener.accept()?;
+        if crate::upgrade::pending() {
+            listener.take();
+            if let Err(err) = crate::upgrade::apply_staged() {
+                eprintln!("bezel: upgrade failed ({err})");
+                listener = Some(listen_on(ip, port)?);
+            }
+            continue;
+        }
+        let Some(listen) = listener.as_ref() else {
+            continue;
+        };
+        let accepted = match listen.accept() {
+            Ok(accepted) => accepted,
+            Err(err) if accept_is_idle(&err) => {
+                thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        let (mut stream, peer) = accepted;
+        stream.set_nonblocking(false)?;
         let allowed = net::resolve(allow_name, 0).unwrap_or_default();
         let allowed_ips: Vec<IpAddr> = allowed.into_iter().map(|addr| addr.ip()).collect();
         if !peer_allowed(peer.ip(), &allowed_ips) {
@@ -45,10 +69,23 @@ pub fn listen(port: u16, allow_name: &str, edge: Edge) -> io::Result<()> {
             continue;
         }
         eprintln!("bezel: connected {}", peer.ip());
-        if let Err(err) = dispatch(stream, edge) {
+        if let Err(err) = dispatch(stream) {
             eprintln!("bezel: disconnected ({err})");
         }
     }
+}
+
+fn accept_is_idle(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+    )
+}
+
+fn listen_on(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {
+    let listener = bind_listener(ip, port)?;
+    listener.set_nonblocking(true)?;
+    Ok(listener)
 }
 
 fn bind_listener(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {
@@ -70,14 +107,14 @@ fn bind_listener(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {
     Err(last.unwrap_or_else(|| io::Error::new(ErrorKind::AddrInUse, "bind")))
 }
 
-fn dispatch(mut stream: TcpStream, edge: Edge) -> io::Result<()> {
+fn dispatch(mut stream: TcpStream) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     if is_update(&stream)? {
         stream.set_read_timeout(Some(Duration::from_secs(60)))?;
         return accept_update(&mut stream);
     }
     let _ = stream.set_read_timeout(None);
-    session(stream, edge)
+    session(stream)
 }
 
 fn is_update(stream: &TcpStream) -> io::Result<bool> {
@@ -120,10 +157,11 @@ fn accept_update(stream: &mut TcpStream) -> io::Result<()> {
     }
 }
 
-fn session(stream: TcpStream, edge: Edge) -> io::Result<()> {
+fn session(stream: TcpStream) -> io::Result<()> {
     let mut link = Link::new(stream)?;
     let (width, height, scale) = display();
-    let mut cursor = Cursor::new(width, height, edge);
+    // Windows sends the edge. This value holds only until that frame arrives.
+    let mut cursor = Cursor::new(width, height, Edge::Left);
     let mut held_keys = BTreeSet::new();
     let mut held_buttons = BTreeSet::new();
     let mut last_beat = Instant::now();
@@ -143,6 +181,7 @@ fn session(stream: TcpStream, edge: Edge) -> io::Result<()> {
                             logical_w: width.round().clamp(1.0, u16::MAX as f64) as u16,
                             logical_h: height.round().clamp(1.0, u16::MAX as f64) as u16,
                             scale_milli: scale,
+                            accepts_config: true,
                         })?;
                         greeted = true;
                         continue;
@@ -151,6 +190,11 @@ fn session(stream: TcpStream, edge: Edge) -> io::Result<()> {
                         continue;
                     }
                     if matches!(frame, Frame::Heartbeat) {
+                        continue;
+                    }
+                    if let Frame::Config { edge } = frame {
+                        cursor.set_edge(edge);
+                        eprintln!("bezel: edge {}", edge.as_str());
                         continue;
                     }
                     for effect in cursor.apply(frame) {

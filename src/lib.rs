@@ -13,6 +13,7 @@ pub mod net;
 pub mod scale;
 pub mod settings;
 pub mod update;
+pub mod upgrade;
 
 pub const DEFAULT_PORT: u16 = 47940;
 pub const DEFAULT_MAC: &str = "daniels-macbook-pro.tail0ffb4a.ts.net";

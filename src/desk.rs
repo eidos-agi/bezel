@@ -22,6 +22,21 @@ impl Edge {
             Self::Right => "right",
         }
     }
+
+    pub fn wire(self) -> u8 {
+        match self {
+            Self::Left => 0,
+            Self::Right => 1,
+        }
+    }
+
+    pub fn from_wire(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Left),
+            1 => Some(Self::Right),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

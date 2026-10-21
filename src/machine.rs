@@ -111,6 +111,14 @@ impl Machine {
         }
     }
 
+    pub fn edge(&self) -> Edge {
+        self.edge
+    }
+
+    pub fn set_edge(&mut self, edge: Edge) {
+        self.edge = edge;
+    }
+
     pub fn mode(&self) -> Mode {
         self.mode
     }
