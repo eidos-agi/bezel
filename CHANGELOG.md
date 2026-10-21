@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-21
+
+### Fixed
+
+- Keys typed on Windows reach the Mac. Swallowing a key stops Windows from delivering it as raw input, so the hook keeps that key. A held letter repeats. The Windows key and Ctrl+Alt+Shift still stay on Windows.
+- The Mac posts keys and moves with no local-event suppression, so a stream of pointer moves does not drop the next key.
+
 ## [0.1.5] - 2026-10-21
 
 ### Added

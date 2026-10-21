@@ -122,6 +122,13 @@ pub fn from_set1(make: u16, extended: bool) -> Option<u16> {
     }
 }
 
+/// A low-level keyboard hook packet. Bit 0 is the extended prefix. Bit 7 is key up.
+pub fn from_ll_hook(scan: u32, flags: u32) -> Option<(u16, bool)> {
+    let hid = from_set1(scan as u16, flags & 1 != 0)?;
+    let down = flags & 0x80 == 0;
+    Some((hid, down))
+}
+
 /// Mac virtual keycode for a HID usage. Ctrl becomes Command. Alt becomes Option.
 /// The Windows key is not forwarded, so it has no Mac code.
 pub fn mac_keycode(hid: u16) -> Option<u16> {
@@ -246,6 +253,13 @@ mod phf_less {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hook_packet_matches_the_raw_scan() {
+        assert_eq!(from_ll_hook(0x1E, 0), Some((0x04, true)));
+        assert_eq!(from_ll_hook(0x1E, 0x80), Some((0x04, false)));
+        assert_eq!(from_ll_hook(0x1D, 1), Some((RIGHT_CTRL, true)));
+    }
 
     #[test]
     fn set1_maps_the_keys_the_edge_cares_about() {

@@ -260,7 +260,8 @@ impl Machine {
             return Vec::new();
         }
         if down {
-            if !self.held_keys.insert(hid) {
+            let fresh = self.held_keys.insert(hid);
+            if !fresh && hid::is_modifier(hid) {
                 return Vec::new();
             }
         } else if !self.held_keys.remove(&hid) {
@@ -542,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_key_down_is_sent_once() {
+    fn a_repeated_letter_is_sent_and_shift_is_not() {
         let desk = darwin_desk();
         let mut machine = Machine::new(Edge::Left);
         enter(&mut machine);
@@ -563,7 +564,31 @@ mod tests {
             &desk,
         );
         assert_eq!(sends(&first), vec![Frame::Key { hid: 0x04, down: true }]);
-        assert!(sends(&second).is_empty());
+        assert_eq!(sends(&second), vec![Frame::Key { hid: 0x04, down: true }]);
+        let shift = machine.handle(
+            Event::Key {
+                hid: hid::LEFT_SHIFT,
+                down: true,
+                now: 60,
+            },
+            &desk,
+        );
+        let shift_again = machine.handle(
+            Event::Key {
+                hid: hid::LEFT_SHIFT,
+                down: true,
+                now: 70,
+            },
+            &desk,
+        );
+        assert_eq!(
+            sends(&shift),
+            vec![Frame::Key {
+                hid: hid::LEFT_SHIFT,
+                down: true
+            }]
+        );
+        assert!(sends(&shift_again).is_empty());
     }
 
     #[test]

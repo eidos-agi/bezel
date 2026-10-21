@@ -14,6 +14,7 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use foreign_types::ForeignType;
 use core_graphics::geometry::CGPoint;
 use std::collections::BTreeSet;
 use std::io::{self, ErrorKind, Write};
@@ -358,8 +359,17 @@ fn flags(held: &BTreeSet<u16>) -> CGEventFlags {
 }
 
 fn event_source() -> io::Result<CGEventSource> {
-    CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| io::Error::new(ErrorKind::Other, "event source"))
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| io::Error::new(ErrorKind::Other, "event source"))?;
+    unsafe {
+        CGEventSourceSetLocalEventsSuppressionInterval(source.as_ptr() as *mut _, 0.0);
+    }
+    Ok(source)
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSetLocalEventsSuppressionInterval(source: *mut std::ffi::c_void, seconds: f64);
 }
 
 fn display() -> (f64, f64, u16) {

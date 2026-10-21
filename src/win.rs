@@ -1,5 +1,5 @@
-//! Capture on Windows. The low-level hooks only decide whether to swallow.
-//! They do not touch the socket. Raw input is read on this thread.
+//! Capture on Windows. The hooks do not touch the socket.
+//! A swallowed key never arrives as raw input, so the keyboard hook keeps it.
 
 use crate::ballistics::Ballistics;
 use crate::inbox::Store;
@@ -12,8 +12,9 @@ use crate::scale::Scaler;
 use std::io::{self, ErrorKind};
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use windows::core::{w, PCWSTR};
@@ -25,7 +26,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY};
+
 use windows::Win32::UI::Input::{
     GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
     RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD, RIM_TYPEMOUSE,
@@ -50,14 +51,26 @@ const MIDDLE_DOWN: u16 = 0x0010;
 const MIDDLE_UP: u16 = 0x0020;
 const WHEEL: u16 = 0x0400;
 const HWHEEL: u16 = 0x0800;
-const VK_SHIFT: VIRTUAL_KEY = VIRTUAL_KEY(0x10);
-const VK_CONTROL: VIRTUAL_KEY = VIRTUAL_KEY(0x11);
-const VK_MENU: VIRTUAL_KEY = VIRTUAL_KEY(0x12);
-const VK_LWIN: VIRTUAL_KEY = VIRTUAL_KEY(0x5B);
-const VK_RWIN: VIRTUAL_KEY = VIRTUAL_KEY(0x5C);
+const BIT_LCTRL: u8 = 1 << 0;
+const BIT_RCTRL: u8 = 1 << 1;
+const BIT_LALT: u8 = 1 << 2;
+const BIT_RALT: u8 = 1 << 3;
+const BIT_LSHIFT: u8 = 1 << 4;
+const BIT_RSHIFT: u8 = 1 << 5;
+const BIT_LWIN: u8 = 1 << 6;
+const BIT_RWIN: u8 = 1 << 7;
+const LLKHF_UP: u32 = 0x80;
 
 static SWALLOW: AtomicBool = AtomicBool::new(false);
 static FORCE_LOCAL: AtomicBool = AtomicBool::new(false);
+static MODS: AtomicU8 = AtomicU8::new(0);
+
+struct QueuedKey {
+    hid: u16,
+    down: bool,
+}
+
+static KEY_QUEUE: Mutex<Vec<QueuedKey>> = Mutex::new(Vec::new());
 
 struct Dial {
     gen: u64,
@@ -191,6 +204,28 @@ fn take_local(session: &mut Session) {
     if FORCE_LOCAL.swap(false, Ordering::SeqCst) {
         let now = now_ms(session.started);
         enact(session, Event::ForceLocal { now });
+    }
+    drain_keys(session);
+}
+
+fn drain_keys(session: &mut Session) {
+    let queued = match KEY_QUEUE.lock() {
+        Ok(mut queue) => std::mem::take(&mut *queue),
+        Err(err) => std::mem::take(&mut *err.into_inner()),
+    };
+    if queued.is_empty() {
+        return;
+    }
+    let now = now_ms(session.started);
+    for key in queued {
+        enact(
+            session,
+            Event::Key {
+                hid: key.hid,
+                down: key.down,
+                now,
+            },
+        );
     }
 }
 
@@ -567,6 +602,9 @@ fn handle_raw(session: &mut Session, lparam: LPARAM) {
         return;
     }
     if input.header.dwType == RIM_TYPEKEYBOARD.0 {
+        if SWALLOW.load(Ordering::SeqCst) {
+            return;
+        }
         let board = unsafe { input.data.keyboard };
         let extended = board.Flags & RI_KEY_E0 != 0;
         let down = board.Flags & RI_KEY_BREAK == 0;
@@ -743,20 +781,69 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
 
 unsafe extern "system" fn key_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 {
-        let win = key_down(VK_LWIN) || key_down(VK_RWIN);
-        let chord = key_down(VK_CONTROL) && key_down(VK_MENU) && key_down(VK_SHIFT);
+        let packet = &*(lparam.0 as *const LlKey);
+        let down = packet.flags & LLKHF_UP == 0;
+        note_mod(packet.vk_code, down);
+        let mods = MODS.load(Ordering::SeqCst);
+        let win = mods & (BIT_LWIN | BIT_RWIN) != 0;
+        let chord = mods & (BIT_LCTRL | BIT_RCTRL) != 0
+            && mods & (BIT_LALT | BIT_RALT) != 0
+            && mods & (BIT_LSHIFT | BIT_RSHIFT) != 0;
         if win || chord {
             FORCE_LOCAL.store(true, Ordering::SeqCst);
             SWALLOW.store(false, Ordering::SeqCst);
             return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
         }
         if SWALLOW.load(Ordering::SeqCst) {
+            remember_hook_key(packet);
             return LRESULT(1);
         }
     }
     CallNextHookEx(HHOOK::default(), code, wparam, lparam)
 }
 
-fn key_down(vk: VIRTUAL_KEY) -> bool {
-    unsafe { GetAsyncKeyState(i32::from(vk.0)) as u16 & 0x8000 != 0 }
+fn note_mod(vk: u32, down: bool) {
+    let Some(bit) = (match vk {
+        0xA2 | 0x11 => Some(BIT_LCTRL),
+        0xA3 => Some(BIT_RCTRL),
+        0xA4 | 0x12 => Some(BIT_LALT),
+        0xA5 => Some(BIT_RALT),
+        0xA0 | 0x10 => Some(BIT_LSHIFT),
+        0xA1 => Some(BIT_RSHIFT),
+        0x5B => Some(BIT_LWIN),
+        0x5C => Some(BIT_RWIN),
+        _ => None,
+    }) else {
+        return;
+    };
+    if down {
+        MODS.fetch_or(bit, Ordering::SeqCst);
+    } else {
+        MODS.fetch_and(!bit, Ordering::SeqCst);
+    }
+}
+
+fn remember_hook_key(packet: &LlKey) {
+    let Some((hid, down)) = hid::from_ll_hook(packet.scan_code, packet.flags) else {
+        return;
+    };
+    if hid::is_gui(hid) {
+        return;
+    }
+    let Ok(mut queue) = KEY_QUEUE.lock() else {
+        return;
+    };
+    if queue.len() >= 128 && down {
+        return;
+    }
+    queue.push(QueuedKey { hid, down });
+}
+
+#[repr(C)]
+struct LlKey {
+    vk_code: u32,
+    scan_code: u32,
+    flags: u32,
+    time: u32,
+    extra: usize,
 }

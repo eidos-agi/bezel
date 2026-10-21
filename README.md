@@ -70,7 +70,7 @@ A published release is how a running copy updates. The controller and the Mac bo
 
 MIT License. See [LICENSE](LICENSE).
 
-Ctrl becomes Command. Alt becomes Option. Shift stays Shift. The Windows key stays on Windows. Ctrl+Alt+Shift returns the pointer immediately.
+Ctrl becomes Command. Alt becomes Option. Shift stays Shift. The Windows key stays on Windows. Ctrl+Alt+Shift returns the pointer immediately. A held key repeats.
 
 ## Pass
 
