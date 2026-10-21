@@ -122,11 +122,71 @@ pub fn from_set1(make: u16, extended: bool) -> Option<u16> {
     }
 }
 
-/// A low-level keyboard hook packet. Bit 0 is the extended prefix. Bit 7 is key up.
-pub fn from_ll_hook(scan: u32, flags: u32) -> Option<(u16, bool)> {
-    let hid = from_set1(scan as u16, flags & 1 != 0)?;
-    let down = flags & 0x80 == 0;
-    Some((hid, down))
+/// Hook or raw packet. Bit 0 of `flags` is the extended prefix. Bit 7 is key up.
+/// A make code with the high bit set is also a key-up. `vk` is the fallback when
+/// the scan code is not in the set-1 map.
+pub fn from_hook(scan: u32, flags: u32, vk: u32) -> Option<(u16, bool)> {
+    let extended = flags & 1 != 0;
+    let mut down = flags & 0x80 == 0;
+    let mut make = (scan as u16) & 0xFF;
+    if make & 0x80 != 0 {
+        make &= !0x80;
+        down = false;
+    }
+    if let Some(hid) = from_set1(make, extended) {
+        return Some((hid, down));
+    }
+    from_vk(vk).map(|hid| (hid, down))
+}
+
+fn from_vk(vk: u32) -> Option<u16> {
+    match vk {
+        0x41..=0x5A => Some(0x04 + (vk as u16 - 0x41)),
+        0x31..=0x39 => Some(0x1E + (vk as u16 - 0x31)),
+        0x30 => Some(0x27),
+        0x20 => Some(0x2C),
+        0x0D => Some(0x28),
+        0x1B => Some(0x29),
+        0x08 => Some(0x2A),
+        0x09 => Some(0x2B),
+        0xA0 | 0x10 => Some(LEFT_SHIFT),
+        0xA1 => Some(RIGHT_SHIFT),
+        0xA2 | 0x11 => Some(LEFT_CTRL),
+        0xA3 => Some(RIGHT_CTRL),
+        0xA4 | 0x12 => Some(LEFT_ALT),
+        0xA5 => Some(RIGHT_ALT),
+        0x25 => Some(0x50),
+        0x26 => Some(0x52),
+        0x27 => Some(0x4F),
+        0x28 => Some(0x51),
+        _ => None,
+    }
+}
+
+pub fn label(hid: u16) -> String {
+    match hid {
+        LEFT_CTRL => "LeftCtrl".to_string(),
+        RIGHT_CTRL => "RightCtrl".to_string(),
+        LEFT_SHIFT => "LeftShift".to_string(),
+        RIGHT_SHIFT => "RightShift".to_string(),
+        LEFT_ALT => "LeftAlt".to_string(),
+        RIGHT_ALT => "RightAlt".to_string(),
+        LEFT_GUI => "LeftWin".to_string(),
+        RIGHT_GUI => "RightWin".to_string(),
+        0x04..=0x1D => char::from(b'A' + (hid as u8 - 0x04)).to_string(),
+        0x1E..=0x26 => char::from(b'1' + (hid as u8 - 0x1E)).to_string(),
+        0x27 => "0".to_string(),
+        0x28 => "Enter".to_string(),
+        0x29 => "Escape".to_string(),
+        0x2A => "Backspace".to_string(),
+        0x2B => "Tab".to_string(),
+        0x2C => "Space".to_string(),
+        0x4F => "Right".to_string(),
+        0x50 => "Left".to_string(),
+        0x51 => "Down".to_string(),
+        0x52 => "Up".to_string(),
+        other => format!("hid {other:02X}"),
+    }
 }
 
 /// Mac virtual keycode for a HID usage. Ctrl becomes Command. Alt becomes Option.
@@ -256,9 +316,13 @@ mod tests {
 
     #[test]
     fn hook_packet_matches_the_raw_scan() {
-        assert_eq!(from_ll_hook(0x1E, 0), Some((0x04, true)));
-        assert_eq!(from_ll_hook(0x1E, 0x80), Some((0x04, false)));
-        assert_eq!(from_ll_hook(0x1D, 1), Some((RIGHT_CTRL, true)));
+        assert_eq!(from_hook(0x1E, 0, 0), Some((0x04, true)));
+        assert_eq!(from_hook(0x1E, 0x80, 0), Some((0x04, false)));
+        assert_eq!(from_hook(0x9E, 0x80, 0), Some((0x04, false)));
+        assert_eq!(from_hook(0x1D, 1, 0), Some((RIGHT_CTRL, true)));
+        assert_eq!(from_hook(0, 0, 0x41), Some((0x04, true)));
+        assert_eq!(label(0x04), "A");
+        assert_eq!(label(LEFT_SHIFT), "LeftShift");
     }
 
     #[test]

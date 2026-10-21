@@ -12,7 +12,7 @@ use crate::scale::Scaler;
 use std::io::{self, ErrorKind};
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Mutex;
 use std::thread;
@@ -71,6 +71,7 @@ struct QueuedKey {
 }
 
 static KEY_QUEUE: Mutex<Vec<QueuedKey>> = Mutex::new(Vec::new());
+static HOOKED: AtomicU64 = AtomicU64::new(0);
 
 struct Dial {
     gen: u64,
@@ -201,6 +202,7 @@ fn event_loop(session: &mut Session) -> io::Result<()> {
 }
 
 fn take_local(session: &mut Session) {
+    crate::trace::flush();
     if FORCE_LOCAL.swap(false, Ordering::SeqCst) {
         let now = now_ms(session.started);
         enact(session, Event::ForceLocal { now });
@@ -218,6 +220,13 @@ fn drain_keys(session: &mut Session) {
     }
     let now = now_ms(session.started);
     for key in queued {
+        if crate::trace::on() {
+            crate::trace::key(&format!(
+                "{} {} hook",
+                hid::label(key.hid),
+                crate::trace::dir(key.down)
+            ));
+        }
         enact(
             session,
             Event::Key {
@@ -332,7 +341,18 @@ fn enact(session: &mut Session, event: Event) {
     for action in actions {
         match action {
             Action::Send(frame) => {
-                if !try_send(session, &frame) {
+                let sent = try_send(session, &frame);
+                if let Frame::Key { hid, down } = &frame {
+                    if crate::trace::on() {
+                        let why = if sent { "sent" } else { "not-sent link" };
+                        crate::trace::key(&format!(
+                            "{} {} {why}",
+                            hid::label(*hid),
+                            crate::trace::dir(*down)
+                        ));
+                    }
+                }
+                if !sent {
                     dead = true;
                 }
             }
@@ -602,15 +622,34 @@ fn handle_raw(session: &mut Session, lparam: LPARAM) {
         return;
     }
     if input.header.dwType == RIM_TYPEKEYBOARD.0 {
-        if SWALLOW.load(Ordering::SeqCst) {
-            return;
-        }
         let board = unsafe { input.data.keyboard };
-        let extended = board.Flags & RI_KEY_E0 != 0;
-        let down = board.Flags & RI_KEY_BREAK == 0;
-        let Some(hid) = hid::from_set1(board.MakeCode, extended) else {
+        let mut flags = 0u32;
+        if board.Flags & RI_KEY_E0 != 0 {
+            flags |= 1;
+        }
+        if board.Flags & RI_KEY_BREAK != 0 {
+            flags |= 0x80;
+        }
+        let Some((hid, down)) = hid::from_hook(u32::from(board.MakeCode), flags, u32::from(board.VKey))
+        else {
+            if crate::trace::on() {
+                crate::trace::key(&format!(
+                    "scan {:02X} vk {:02X} raw unmapped",
+                    board.MakeCode, board.VKey
+                ));
+            }
             return;
         };
+        if hook_echo(hid, down) {
+            return;
+        }
+        if crate::trace::on() {
+            crate::trace::key(&format!(
+                "{} {} raw",
+                hid::label(hid),
+                crate::trace::dir(down)
+            ));
+        }
         enact(session, Event::Key { hid, down, now });
     }
 }
@@ -794,8 +833,7 @@ unsafe extern "system" fn key_hook(code: i32, wparam: WPARAM, lparam: LPARAM) ->
             SWALLOW.store(false, Ordering::SeqCst);
             return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
         }
-        if SWALLOW.load(Ordering::SeqCst) {
-            remember_hook_key(packet);
+        if SWALLOW.load(Ordering::SeqCst) && remember_hook_key(packet) {
             return LRESULT(1);
         }
     }
@@ -823,20 +861,68 @@ fn note_mod(vk: u32, down: bool) {
     }
 }
 
-fn remember_hook_key(packet: &LlKey) {
-    let Some((hid, down)) = hid::from_ll_hook(packet.scan_code, packet.flags) else {
-        return;
+fn remember_hook_key(packet: &LlKey) -> bool {
+    let Some((hid, down)) = hid::from_hook(packet.scan_code, packet.flags, packet.vk_code) else {
+        if crate::trace::on() {
+            crate::trace::later(format!(
+                "scan {:02X} vk {:02X} {} unmapped",
+                packet.scan_code,
+                packet.vk_code,
+                crate::trace::dir(packet.flags & LLKHF_UP == 0)
+            ));
+        }
+        return false;
     };
     if hid::is_gui(hid) {
-        return;
+        return false;
     }
     let Ok(mut queue) = KEY_QUEUE.lock() else {
-        return;
+        if crate::trace::on() {
+            crate::trace::later(format!(
+                "{} {} not-sent queue",
+                hid::label(hid),
+                crate::trace::dir(down)
+            ));
+        }
+        return true;
     };
     if queue.len() >= 128 && down {
-        return;
+        if crate::trace::on() {
+            crate::trace::later(format!(
+                "{} {} not-sent queue",
+                hid::label(hid),
+                crate::trace::dir(down)
+            ));
+        }
+        return true;
     }
     queue.push(QueuedKey { hid, down });
+    mark_hooked(hid, down);
+    true
+}
+
+fn mark_hooked(hid: u16, down: bool) {
+    let now = unix_ms();
+    let packed = (now << 17) | (u64::from(hid) << 1) | u64::from(down);
+    HOOKED.store(packed, Ordering::Relaxed);
+}
+
+fn hook_echo(hid: u16, down: bool) -> bool {
+    if !SWALLOW.load(Ordering::Relaxed) {
+        return false;
+    }
+    let packed = HOOKED.load(Ordering::Relaxed);
+    let seen = (packed >> 1) as u16;
+    let was_down = packed & 1 == 1;
+    let at = packed >> 17;
+    seen == hid && was_down == down && unix_ms().saturating_sub(at) < 50
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[repr(C)]

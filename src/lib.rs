@@ -14,6 +14,7 @@ pub mod net;
 pub mod report;
 pub mod scale;
 pub mod settings;
+pub mod trace;
 pub mod update;
 pub mod upgrade;
 pub mod who;

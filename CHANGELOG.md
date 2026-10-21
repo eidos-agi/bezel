@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-21
+
+### Added
+
+- `--debug` prints each key and whether it was sent. A key that is typed and not transferred says why.
+
+### Fixed
+
+- A key the hook cannot name is no longer eaten. A key the hook misses is still read from raw input. A break scan with the high bit set counts as a key-up.
+
 ## [0.1.6] - 2026-10-21
 
 ### Fixed

@@ -72,6 +72,8 @@ MIT License. See [LICENSE](LICENSE).
 
 Ctrl becomes Command. Alt becomes Option. Shift stays Shift. The Windows key stays on Windows. Ctrl+Alt+Shift returns the pointer immediately. A held key repeats.
 
+`--debug` (or `BEZEL_DEBUG=1`) prints each key and whether it was sent. A key that was typed and not transferred says why: `local`, `pending`, `unmapped`, `queue`, or `link`. The lines stay on the console. They are not written to a file and they are not filed as issues.
+
 ## Pass
 
 Cross, click, type a word, scroll, and cross back. Hold Shift across the edge, release it, and type a lowercase letter. Sleep the Mac and confirm Windows still owns the mouse. Wake it and cross again.

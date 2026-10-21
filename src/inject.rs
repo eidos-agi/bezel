@@ -77,6 +77,16 @@ impl Cursor {
                 }
                 vec![Effect::Key { hid, down }]
             }
+            Frame::Key { hid, down } => {
+                if crate::trace::on() {
+                    crate::trace::key(&format!(
+                        "{} {} not-posted inactive",
+                        crate::hid::label(hid),
+                        crate::trace::dir(down)
+                    ));
+                }
+                Vec::new()
+            }
             Frame::Release | Frame::Leave => self.ups(),
             Frame::Config { edge } => {
                 self.edge = edge;

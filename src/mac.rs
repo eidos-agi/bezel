@@ -262,6 +262,13 @@ fn perform(
                 held_keys.remove(hid);
             }
             let Some(code) = mac_keycode(*hid) else {
+                if crate::trace::on() {
+                    crate::trace::key(&format!(
+                        "{} {} not-posted unmapped",
+                        hid::label(*hid),
+                        crate::trace::dir(*down)
+                    ));
+                }
                 return Ok(());
             };
             let event = CGEvent::new_keyboard_event(event_source()?, code, *down)
@@ -271,6 +278,13 @@ fn perform(
             }
             event.set_flags(flags(held_keys));
             event.post(CGEventTapLocation::HID);
+            if crate::trace::on() {
+                crate::trace::key(&format!(
+                    "{} {} posted",
+                    hid::label(*hid),
+                    crate::trace::dir(*down)
+                ));
+            }
         }
         Effect::Send(_) => {}
     }

@@ -17,6 +17,16 @@ pub enum Mode {
     Remote,
 }
 
+impl Mode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Mode::Local => "local",
+            Mode::Pending => "pending",
+            Mode::Remote => "remote",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     Pointer {
@@ -256,15 +266,33 @@ impl Machine {
     }
 
     fn key(&mut self, hid: u16, down: bool, _now: u64) -> Vec<Action> {
-        if hid::is_gui(hid) || self.mode != Mode::Remote {
+        let note = |why: &str| {
+            if crate::trace::on() {
+                crate::trace::key(&format!(
+                    "{} {} {why}",
+                    hid::label(hid),
+                    crate::trace::dir(down)
+                ));
+            }
+        };
+        if hid::is_gui(hid) {
+            note("not-sent win");
+            return Vec::new();
+        }
+        if self.mode != Mode::Remote {
+            if crate::trace::on() {
+                note(&format!("not-sent {}", self.mode.as_str()));
+            }
             return Vec::new();
         }
         if down {
             let fresh = self.held_keys.insert(hid);
             if !fresh && hid::is_modifier(hid) {
+                note("not-sent repeat");
                 return Vec::new();
             }
         } else if !self.held_keys.remove(&hid) {
+            note("not-sent up");
             return Vec::new();
         }
         vec![Action::Send(Frame::Key { hid, down })]

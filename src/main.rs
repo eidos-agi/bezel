@@ -48,6 +48,7 @@ fn run() -> io::Result<()> {
             if let Some(host) = host {
                 settings.host = host;
             }
+            arm_debug(rest);
             capture(&settings, &path, !flag_present(rest, "--no-upgrade"))
         }
         Some(other) => Err(io::Error::new(
@@ -80,6 +81,7 @@ fn capture(settings: &Settings, config: &std::path::Path, upgrade: bool) -> io::
 }
 
 fn listen(args: &[String]) -> io::Result<()> {
+    arm_debug(args);
     let (settings, path) = load_settings(args)?;
     let upgrade = !flag_present(args, "--no-upgrade");
     #[cfg(target_os = "macos")]
@@ -224,6 +226,13 @@ fn load_settings(args: &[String]) -> io::Result<(Settings, PathBuf)> {
     Ok((settings, path))
 }
 
+fn arm_debug(args: &[String]) {
+    let env = std::env::var_os("BEZEL_DEBUG").is_some_and(|value| value != "0");
+    if flag_present(args, "--debug") || env {
+        bezel::trace::set(true);
+    }
+}
+
 fn flag_present(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
 }
@@ -258,8 +267,8 @@ fn print_usage() {
     let path = settings::default_path().display().to_string();
     println!(
         "\
-bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--no-upgrade]
-bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--no-upgrade]
+bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--debug] [--no-upgrade]
+bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--debug] [--no-upgrade]
 bezel who
 bezel inbox
 bezel inbox add <text>
@@ -275,6 +284,7 @@ Flags override the file until the file is saved again. Windows sends the edge on
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
 bezel who prints the stable name of this machine. bezel inbox changes the shared messages.
 Windows and the Mac each file a GitHub issue when a problem happens. bezel report files one now.
+--debug prints each key and whether it was sent. BEZEL_DEBUG=1 does the same. The lines stay on the console.
 bezel update sends this tree to the Mac, which builds it and restarts listen.
 
 Ctrl becomes Command. Alt becomes Option. Shift stays Shift.
