@@ -48,7 +48,7 @@ edge = left
 allow = darwin-dell-xps.tail0ffb4a.ts.net
 ```
 
-`edge = left` leaves the outer left edge of the Windows desktop and returns across the Mac's right edge. `edge = right` is the other way around. Windows sends that edge when the connection comes up. Saving the Windows settings file while bezel is running sends the new edge on the same connection, including while the pointer is on the Mac. Scale is applied on Windows before each move. Host and port apply the next time bezel starts. `allow` is the Mac listener's accept list.
+`edge = left` leaves any Windows screen edge that has no Windows screen beyond it on the left, and returns across the Mac's right edge. Two Windows screens that touch do not cross. `edge = right` is the other way around. Windows sends that edge when the connection comes up. Saving the Windows settings file while bezel is running sends the new edge on the same connection, including while the pointer is on the Mac. Scale is applied on Windows before each move. Host and port apply the next time bezel starts. `allow` is the Mac listener's accept list.
 
 A listener from before this build has no edge frame. Windows sees that in the hello and keeps the edge to itself. Sending the frame to that listener would drop the session.
 

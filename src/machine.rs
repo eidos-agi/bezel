@@ -173,7 +173,7 @@ impl Machine {
             Mode::Pending => Vec::new(),
             Mode::Local => {
                 if self.peer_up && desk.arms(self.edge, x, y, dx) {
-                    self.begin_pending(desk, y, now)
+                    self.begin_pending(desk, x, y, now)
                 } else {
                     Vec::new()
                 }
@@ -181,8 +181,8 @@ impl Machine {
         }
     }
 
-    fn begin_pending(&mut self, desk: &Desk, y: i32, now: u64) -> Vec<Action> {
-        let Some(crossing) = desk.crossing(self.edge, y) else {
+    fn begin_pending(&mut self, desk: &Desk, x: i32, y: i32, now: u64) -> Vec<Action> {
+        let Some(crossing) = desk.crossing(self.edge, x, y) else {
             return Vec::new();
         };
         let seq = self.next_seq;

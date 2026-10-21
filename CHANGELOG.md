@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-21
+
+### Fixed
+
+- Moving into a gap between Windows screens, or off a screen with nothing beyond it, hands the pointer to the Mac. The seam where two Windows screens touch stays on Windows.
+
 ## [0.1.1] - 2026-10-21
 
 ### Changed

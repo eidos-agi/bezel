@@ -74,8 +74,8 @@ impl Desk {
         outward && self.on_exit(edge, x, y)
     }
 
-    pub fn crossing(&self, edge: Edge, y: i32) -> Option<Crossing> {
-        let mon = self.exit_monitor(edge, y)?;
+    pub fn crossing(&self, edge: Edge, x: i32, y: i32) -> Option<Crossing> {
+        let mon = self.edge_monitor(edge, x, y)?;
         let rel = y - mon.y;
         let park_x = match edge {
             Edge::Left => mon.x + 1,
@@ -90,18 +90,19 @@ impl Desk {
     }
 
     fn on_exit(&self, edge: Edge, x: i32, y: i32) -> bool {
-        self.exit_monitor(edge, y)
-            .is_some_and(|mon| x == exit_x(mon, edge))
+        self.edge_monitor(edge, x, y).is_some()
     }
 
-    /// A neighbor on the exit side blocks the edge, so moving between Windows
-    /// monitors does not arm a cross.
-    fn exit_monitor(&self, edge: Edge, y: i32) -> Option<&Mon> {
-        let found = self.monitors.iter().filter(|mon| self.outer(mon, edge, y));
-        match edge {
-            Edge::Left => found.min_by_key(|mon| mon.x),
-            Edge::Right => found.max_by_key(|mon| mon.x + mon.w),
-        }
+    /// The monitor under the cursor, when this pixel is a hard edge.
+    /// A neighbor on the exit side blocks it, so moving between touching
+    /// Windows screens does not arm a cross. A gap is a hard edge.
+    fn edge_monitor(&self, edge: Edge, x: i32, y: i32) -> Option<&Mon> {
+        self.monitors.iter().find(|mon| {
+            y >= mon.y
+                && y < mon.y + mon.h
+                && x == exit_x(mon, edge)
+                && self.outer(mon, edge, y)
+        })
     }
 
     fn outer(&self, mon: &Mon, edge: Edge, y: i32) -> bool {
@@ -169,20 +170,24 @@ mod tests {
         assert!(!desk.arms(Edge::Left, -7279, 100, -4));
         assert!(!desk.arms(Edge::Left, -7280, -1, -1));
         assert!(!desk.arms(Edge::Left, -7280, 1440, -1));
-        // Edges between Windows monitors, and the primary's right edge.
+        // The 2560 screen touches the ultrawide, so its left edge stays on Windows.
         assert!(!desk.arms(Edge::Left, -3840, 100, -2));
-        assert!(!desk.arms(Edge::Left, 0, 100, -2));
+        // The primary does not touch the screen on its left. That hard edge crosses.
+        assert!(desk.arms(Edge::Left, 0, 100, -2));
         assert!(!desk.arms(Edge::Left, 1919, 100, 2));
     }
 
     #[test]
     fn park_sits_one_pixel_inside_the_left_edge() {
         let desk = darwin_desk();
-        let cross = desk.crossing(Edge::Left, 100).unwrap();
+        let cross = desk.crossing(Edge::Left, -7280, 100).unwrap();
         assert_eq!(cross.park_x, -7279);
         assert_eq!(cross.park_y, 100);
         assert_eq!(cross.y, 100);
         assert_eq!(cross.span, 1440);
+        let primary = desk.crossing(Edge::Left, 0, 100).unwrap();
+        assert_eq!(primary.park_x, 1);
+        assert_eq!(primary.span, 1200);
     }
 
     #[test]
@@ -190,7 +195,7 @@ mod tests {
         let desk = darwin_desk();
         assert!(desk.arms(Edge::Right, 1919, 100, 1));
         assert!(!desk.arms(Edge::Right, -7280, 100, -1));
-        let cross = desk.crossing(Edge::Right, 100).unwrap();
+        let cross = desk.crossing(Edge::Right, 1919, 100).unwrap();
         assert_eq!(cross.park_x, 1918);
         assert_eq!(cross.span, 1200);
     }
