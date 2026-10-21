@@ -7,6 +7,7 @@ pub mod desk;
 pub mod fake;
 pub mod frame;
 pub mod hid;
+pub mod inbox;
 pub mod inject;
 pub mod machine;
 pub mod net;
@@ -14,6 +15,7 @@ pub mod scale;
 pub mod settings;
 pub mod update;
 pub mod upgrade;
+pub mod who;
 
 pub const DEFAULT_PORT: u16 = 47940;
 pub const DEFAULT_MAC: &str = "daniels-macbook-pro.tail0ffb4a.ts.net";

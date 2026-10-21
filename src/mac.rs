@@ -5,6 +5,7 @@ use crate::allow::peer_allowed;
 use crate::desk::Edge;
 use crate::frame::{Frame, VERSION};
 use crate::hid::{self, mac_keycode};
+use crate::inbox::Store;
 use crate::inject::{Cursor, Effect};
 use crate::net::{self, Link};
 use crate::update;
@@ -17,6 +18,7 @@ use core_graphics::geometry::CGPoint;
 use std::collections::BTreeSet;
 use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::path::Path;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -26,7 +28,7 @@ extern "C" {
     fn AXIsProcessTrusted() -> u8;
 }
 
-pub fn listen(port: u16, allow_name: &str, upgrade: bool) -> io::Result<()> {
+pub fn listen(port: u16, allow_name: &str, upgrade: bool, settings: &Path) -> io::Result<()> {
     if unsafe { AXIsProcessTrusted() == 0 } {
         return Err(io::Error::new(
             ErrorKind::PermissionDenied,
@@ -48,7 +50,7 @@ pub fn listen(port: u16, allow_name: &str, upgrade: bool) -> io::Result<()> {
             continue;
         }
         eprintln!("bezel: connected {}", peer.ip());
-        if let Err(err) = dispatch(stream) {
+        if let Err(err) = dispatch(stream, settings) {
             eprintln!("bezel: disconnected ({err})");
         }
     }
@@ -73,14 +75,14 @@ fn bind_listener(ip: Ipv4Addr, port: u16) -> io::Result<TcpListener> {
     Err(last.unwrap_or_else(|| io::Error::new(ErrorKind::AddrInUse, "bind")))
 }
 
-fn dispatch(mut stream: TcpStream) -> io::Result<()> {
+fn dispatch(mut stream: TcpStream, settings: &Path) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     if is_update(&stream)? {
         stream.set_read_timeout(Some(Duration::from_secs(60)))?;
         return accept_update(&mut stream);
     }
     let _ = stream.set_read_timeout(None);
-    session(stream)
+    session(stream, settings)
 }
 
 fn is_update(stream: &TcpStream) -> io::Result<bool> {
@@ -123,7 +125,7 @@ fn accept_update(stream: &mut TcpStream) -> io::Result<()> {
     }
 }
 
-fn session(stream: TcpStream) -> io::Result<()> {
+fn session(stream: TcpStream, settings: &Path) -> io::Result<()> {
     let mut link = Link::new(stream)?;
     let (width, height, scale) = display();
     // Windows sends the edge. This value holds only until that frame arrives.
@@ -131,7 +133,9 @@ fn session(stream: TcpStream) -> io::Result<()> {
     let mut held_keys = BTreeSet::new();
     let mut held_buttons = BTreeSet::new();
     let mut last_beat = Instant::now();
+    let mut inbox_at = Instant::now();
     let mut greeted = false;
+    let mut inbox = Store::attach(crate::inbox::path_for(settings));
     loop {
         match link.recv() {
             Ok(frames) => {
@@ -139,38 +143,46 @@ fn session(stream: TcpStream) -> io::Result<()> {
                     thread::sleep(Duration::from_millis(4));
                 }
                 for frame in frames {
-                    if let Frame::Hello { version } = frame {
-                        if version != VERSION {
-                            return Err(io::Error::new(ErrorKind::InvalidData, "version"));
+                    match frame {
+                        Frame::Hello { version } => {
+                            if version != VERSION {
+                                return Err(io::Error::new(ErrorKind::InvalidData, "version"));
+                            }
+                            link.send(&Frame::HelloAck {
+                                logical_w: width.round().clamp(1.0, u16::MAX as f64) as u16,
+                                logical_h: height.round().clamp(1.0, u16::MAX as f64) as u16,
+                                scale_milli: scale,
+                                accepts_config: true,
+                                accepts_inbox: true,
+                            })?;
+                            greeted = true;
                         }
-                        link.send(&Frame::HelloAck {
-                            logical_w: width.round().clamp(1.0, u16::MAX as f64) as u16,
-                            logical_h: height.round().clamp(1.0, u16::MAX as f64) as u16,
-                            scale_milli: scale,
-                            accepts_config: true,
-                        })?;
-                        greeted = true;
-                        continue;
-                    }
-                    if !greeted {
-                        continue;
-                    }
-                    if matches!(frame, Frame::Heartbeat) {
-                        continue;
-                    }
-                    if let Frame::Config { edge } = frame {
-                        cursor.set_edge(edge);
-                        eprintln!("bezel: edge {}", edge.as_str());
-                        continue;
-                    }
-                    for effect in cursor.apply(frame) {
-                        perform(&mut held_keys, &mut held_buttons, &effect)?;
-                        if let Effect::Send(reply) = effect {
-                            link.send(&reply)?;
-                            if matches!(reply, Frame::Leave) {
-                                eprintln!("bezel: left");
+                        Frame::Heartbeat => {}
+                        Frame::Config { edge } if greeted => {
+                            cursor.set_edge(edge);
+                            eprintln!("bezel: edge {}", edge.as_str());
+                        }
+                        frame @ (Frame::InboxHello { .. } | Frame::Note { .. }) if greeted => {
+                            if !inbox.has_said() {
+                                let hello = inbox.greet();
+                                link.send(&hello)?;
+                            }
+                            for reply in inbox.observe(frame)? {
+                                link.send(&reply)?;
                             }
                         }
+                        frame if greeted => {
+                            for effect in cursor.apply(frame) {
+                                perform(&mut held_keys, &mut held_buttons, &effect)?;
+                                if let Effect::Send(reply) = effect {
+                                    link.send(&reply)?;
+                                    if matches!(reply, Frame::Leave) {
+                                        eprintln!("bezel: left");
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -187,6 +199,14 @@ fn session(stream: TcpStream) -> io::Result<()> {
             link.send(&Frame::Heartbeat)?;
             last_beat = Instant::now();
         }
+        if greeted && inbox_at.elapsed() >= Duration::from_millis(500) {
+            inbox_at = Instant::now();
+            if let Ok(frames) = inbox.poll() {
+                for frame in frames {
+                    link.send(&frame)?;
+                }
+            }
+        }
         link.flush()?;
     }
 }
@@ -196,9 +216,9 @@ fn perform(
     held_buttons: &mut BTreeSet<u8>,
     effect: &Effect,
 ) -> io::Result<()> {
-    match *effect {
+    match effect {
         Effect::Place { x, y } => {
-            post_move(x, y, held_buttons, flags(held_keys))?;
+            post_move(*x, *y, held_buttons, flags(held_keys))?;
         }
         Effect::Button {
             button,
@@ -206,20 +226,20 @@ fn perform(
             x,
             y,
         } => {
-            if down {
-                held_buttons.insert(button);
+            if *down {
+                held_buttons.insert(*button);
             } else {
-                held_buttons.remove(&button);
+                held_buttons.remove(button);
             }
-            post_button(button, down, x, y, flags(held_keys))?;
+            post_button(*button, *down, *x, *y, flags(held_keys))?;
         }
         Effect::Wheel { dx, dy } => {
             let event = CGEvent::new_scroll_event(
                 event_source()?,
                 1,
                 2,
-                i32::from(dy),
-                i32::from(dx),
+                i32::from(*dy),
+                i32::from(*dx),
                 0,
             )
                 .map_err(|_| io::Error::new(ErrorKind::Other, "scroll"))?;
@@ -227,17 +247,17 @@ fn perform(
             event.post(CGEventTapLocation::HID);
         }
         Effect::Key { hid, down } => {
-            if down {
-                held_keys.insert(hid);
+            if *down {
+                held_keys.insert(*hid);
             } else {
-                held_keys.remove(&hid);
+                held_keys.remove(hid);
             }
-            let Some(code) = mac_keycode(hid) else {
+            let Some(code) = mac_keycode(*hid) else {
                 return Ok(());
             };
-            let event = CGEvent::new_keyboard_event(event_source()?, code, down)
+            let event = CGEvent::new_keyboard_event(event_source()?, code, *down)
                 .map_err(|_| io::Error::new(ErrorKind::Other, "key"))?;
-            if hid::is_modifier(hid) {
+            if hid::is_modifier(*hid) {
                 event.set_type(CGEventType::FlagsChanged);
             }
             event.set_flags(flags(held_keys));

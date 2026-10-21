@@ -29,6 +29,7 @@ pub fn answer(frame: Frame, screen: Screen) -> Option<Frame> {
             logical_h: screen.logical_h,
             scale_milli: screen.scale_milli,
             accepts_config: true,
+            accepts_inbox: false,
         }),
         Frame::Enter { seq, .. } => Some(Frame::EnterAck { seq }),
         Frame::Heartbeat => Some(Frame::Heartbeat),
@@ -69,12 +70,12 @@ pub fn serve_one(mut stream: TcpStream, screen: Screen) -> io::Result<Vec<Frame>
                     io::Error::new(io::ErrorKind::InvalidData, "bad frame")
                 })?;
                 for frame in frames {
-                    if let Some(reply) = answer(frame, screen) {
+                    let stop = matches!(frame, Frame::Release);
+                    if let Some(reply) = answer(frame.clone(), screen) {
                         let mut bytes = Vec::new();
                         frame::encode(&reply, &mut bytes);
                         stream.write_all(&bytes)?;
                     }
-                    let stop = matches!(frame, Frame::Release);
                     seen.push(frame);
                     if stop {
                         return Ok(seen);
@@ -107,7 +108,9 @@ fn summarize(frames: &[Frame]) -> String {
             Frame::Release => "release",
             Frame::Leave => "leave",
             Frame::Config { .. } => "config",
-            _ => "other",
+            Frame::InboxHello { .. } => "inbox",
+            Frame::Note { .. } => "note",
+            Frame::HelloAck { .. } | Frame::EnterAck { .. } => "ack",
         };
         if parts.last().copied() != Some(name) {
             parts.push(name);
@@ -155,6 +158,7 @@ mod tests {
                 logical_h: 1169,
                 scale_milli: 2000,
                 accepts_config: true,
+                accepts_inbox: false,
             }
         ));
         write_frame(

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-21
+
+### Added
+
+- Each machine takes a stable name from its machine id. The name is one of 10,000 first names and one of 10,000 last names, and it stays put across restarts.
+- `bezel inbox` lists a shared inbox. `add`, `update`, and `delete` change it. Connected machines sync those messages. A machine that does not advertise the inbox is left on the pointer frames only.
+
 ## [0.1.2] - 2026-10-21
 
 ### Fixed

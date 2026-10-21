@@ -352,7 +352,7 @@ mod tests {
         actions
             .iter()
             .filter_map(|action| match action {
-                Action::Send(frame) => Some(*frame),
+                Action::Send(frame) => Some(frame.clone()),
                 _ => None,
             })
             .collect()
@@ -371,13 +371,12 @@ mod tests {
             },
             &desk,
         );
-        match sends(&actions)[0] {
-            Frame::Enter { seq, .. } => {
-                machine.handle(Event::EnterAck { seq, now: 20 }, &desk);
-                seq
-            }
+        let seq = match &sends(&actions)[0] {
+            Frame::Enter { seq, .. } => *seq,
             other => panic!("expected enter, got {other:?}"),
-        }
+        };
+        machine.handle(Event::EnterAck { seq, now: 20 }, &desk);
+        seq
     }
 
     #[test]

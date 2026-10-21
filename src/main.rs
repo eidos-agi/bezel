@@ -1,6 +1,7 @@
 use bezel::desk::Edge;
+use bezel::inbox::{self, Note};
 use bezel::settings::{self, Settings};
-use bezel::{fake, DEFAULT_MAC, DEFAULT_PORT, DEFAULT_WINDOWS};
+use bezel::{fake, who, DEFAULT_MAC, DEFAULT_PORT, DEFAULT_WINDOWS};
 use std::env;
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
@@ -26,6 +27,11 @@ fn run() -> io::Result<()> {
         Some("listen") => listen(&args[1..]),
         Some("update") => update(&args[1..]),
         Some("upgrade") => bezel::upgrade::install(),
+        Some("who") => {
+            println!("{}", who::name());
+            Ok(())
+        }
+        Some("inbox") => inbox_cmd(&args[1..]),
         Some("fake") => {
             let port = flag_u16(&args[1..], "--port")?.unwrap_or(DEFAULT_PORT);
             fake::listen(port)
@@ -73,15 +79,15 @@ fn capture(settings: &Settings, config: &std::path::Path, upgrade: bool) -> io::
 }
 
 fn listen(args: &[String]) -> io::Result<()> {
-    let (settings, _path) = load_settings(args)?;
+    let (settings, path) = load_settings(args)?;
     let upgrade = !flag_present(args, "--no-upgrade");
     #[cfg(target_os = "macos")]
     {
-        bezel::mac::listen(settings.port, &settings.allow, upgrade)
+        bezel::mac::listen(settings.port, &settings.allow, upgrade, &path)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (settings, upgrade);
+        let _ = (settings, path, upgrade);
         Err(io::Error::new(
             ErrorKind::Unsupported,
             "bezel listen runs on the Mac",
@@ -106,6 +112,82 @@ fn update(args: &[String]) -> io::Result<()> {
     }
     println!("bezel: {reply}");
     Ok(())
+}
+
+fn inbox_cmd(args: &[String]) -> io::Result<()> {
+    let path = inbox::path_for(&config_path(args));
+    let rest = without_config(args);
+    let mut store = inbox::Store::open(path)?;
+    match rest.first().map(String::as_str) {
+        None => {
+            println!("{}", who::name());
+            let visible: Vec<&Note> = store.notes().iter().filter(|note| !note.deleted).collect();
+            if visible.is_empty() {
+                println!("inbox is empty");
+            }
+            for note in visible {
+                if note.to.is_empty() {
+                    println!("{}\t{}\t{}", note.id, note.from, note.text);
+                } else {
+                    println!("{}\t{} -> {}\t{}", note.id, note.from, note.to, note.text);
+                }
+            }
+            Ok(())
+        }
+        Some("add") => {
+            if rest.len() < 2 {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "missing message"));
+            }
+            let note = store.add(&rest[1..].join(" "))?;
+            println!("{}", note.id);
+            Ok(())
+        }
+        Some("update") => {
+            if rest.len() < 3 {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "missing message"));
+            }
+            let id = parse_id(&rest[1])?;
+            store.update(id, &rest[2..].join(" "))
+        }
+        Some("delete") => {
+            if rest.len() != 2 {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "missing id"));
+            }
+            store.delete(parse_id(&rest[1])?)
+        }
+        Some(other) => Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("unknown command {other}"),
+        )),
+    }
+}
+
+fn parse_id(text: &str) -> io::Result<u32> {
+    text.parse()
+        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "bad id"))
+}
+
+fn config_path(args: &[String]) -> PathBuf {
+    flag_str(args, "--config")
+        .map(PathBuf::from)
+        .unwrap_or_else(settings::default_path)
+}
+
+fn without_config(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for arg in args {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if arg == "--config" {
+            skip = true;
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    out
 }
 
 fn load_settings(args: &[String]) -> io::Result<(Settings, PathBuf)> {
@@ -169,6 +251,11 @@ fn print_usage() {
         "\
 bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--no-upgrade]
 bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--no-upgrade]
+bezel who
+bezel inbox
+bezel inbox add <text>
+bezel inbox update <id> <text>
+bezel inbox delete <id>
 bezel upgrade
 bezel update
 bezel fake [--port {DEFAULT_PORT}]
@@ -176,6 +263,7 @@ bezel fake [--port {DEFAULT_PORT}]
 Settings: {path}
 Flags override the file until the file is saved again. Windows sends the edge on the connection.
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
+bezel who prints the stable name of this machine. bezel inbox changes the shared messages.
 bezel update sends this tree to the Mac, which builds it and restarts listen.
 
 Ctrl becomes Command. Alt becomes Option. Shift stays Shift.

@@ -52,6 +52,10 @@ allow = darwin-dell-xps.tail0ffb4a.ts.net
 
 A listener from before this build has no edge frame. Windows sees that in the hello and keeps the edge to itself. Sending the frame to that listener would drop the session.
 
+## Inbox
+
+`bezel who` prints this machine's name. The name is hashed from the operating system id, so the same computer keeps it. `bezel inbox` lists messages in `inbox.txt` next to the settings file. `bezel inbox add`, `update`, and `delete` change that file. While `bezel --to` and `bezel listen` are connected, each side picks up the other's changes. A message records who wrote it and who it is for. An older bezel on the other end never sees these frames.
+
 ## Update
 
 A published release is how a running copy updates. The controller and the Mac both notice it and wait for `bezel upgrade`. Neither machine installs a release on its own, and neither sends the new binary to the other.

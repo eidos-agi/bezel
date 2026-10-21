@@ -4,7 +4,12 @@ use crate::desk::Edge;
 use std::convert::TryInto;
 
 pub const VERSION: u8 = 1;
-const MAX_BODY: usize = 32;
+/// Pointer frames stay small. A note needs room for text. An old peer still
+/// rejects a body longer than 32, so a note is sent only after that peer asks.
+const MAX_BODY: usize = 512;
+pub const MAX_NOTE_TEXT: usize = 320;
+pub const CAP_CONFIG: u8 = 1;
+pub const CAP_INBOX: u8 = 2;
 
 const HELLO: u8 = 1;
 const HELLO_ACK: u8 = 2;
@@ -18,8 +23,10 @@ const KEY: u8 = 9;
 const HEARTBEAT: u8 = 10;
 const RELEASE: u8 = 11;
 const CONFIG: u8 = 12;
+const NOTE: u8 = 13;
+const INBOX_HELLO: u8 = 14;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
     Hello {
         version: u8,
@@ -30,6 +37,20 @@ pub enum Frame {
         scale_milli: u16,
         /// The Mac applies an edge sent by Windows. An old listener omits this.
         accepts_config: bool,
+        /// The peer can create, read, update, and delete shared messages.
+        accepts_inbox: bool,
+    },
+    /// One machine tells the other its stable name, then the notes may flow.
+    InboxHello {
+        name: String,
+    },
+    Note {
+        id: u32,
+        rev: u32,
+        deleted: bool,
+        from: String,
+        to: String,
+        text: String,
     },
     /// Windows tells the Mac which edge faces it. A later frame replaces it.
     Config {
@@ -100,24 +121,52 @@ impl Default for Reader {
 
 pub fn encode(frame: &Frame, out: &mut Vec<u8>) {
     let mut body = Vec::with_capacity(16);
-    match *frame {
+    match frame {
         Frame::Hello { version } => {
             body.push(HELLO);
-            body.push(version);
+            body.push(*version);
         }
         Frame::HelloAck {
             logical_w,
             logical_h,
             scale_milli,
             accepts_config,
+            accepts_inbox,
         } => {
             body.push(HELLO_ACK);
             body.extend_from_slice(&logical_w.to_le_bytes());
             body.extend_from_slice(&logical_h.to_le_bytes());
             body.extend_from_slice(&scale_milli.to_le_bytes());
-            if accepts_config {
-                body.push(1);
+            let mut caps = 0u8;
+            if *accepts_config {
+                caps |= CAP_CONFIG;
             }
+            if *accepts_inbox {
+                caps |= CAP_INBOX;
+            }
+            if caps != 0 {
+                body.push(caps);
+            }
+        }
+        Frame::InboxHello { name } => {
+            body.push(INBOX_HELLO);
+            body.extend_from_slice(name.as_bytes());
+        }
+        Frame::Note {
+            id,
+            rev,
+            deleted,
+            from,
+            to,
+            text,
+        } => {
+            body.push(NOTE);
+            body.extend_from_slice(&id.to_le_bytes());
+            body.extend_from_slice(&rev.to_le_bytes());
+            body.push(u8::from(*deleted));
+            push_counted(&mut body, from);
+            push_counted(&mut body, to);
+            body.extend_from_slice(text.as_bytes());
         }
         Frame::Config { edge } => {
             body.push(CONFIG);
@@ -141,8 +190,8 @@ pub fn encode(frame: &Frame, out: &mut Vec<u8>) {
         }
         Frame::Button { button, down } => {
             body.push(BUTTON);
-            body.push(button);
-            body.push(u8::from(down));
+            body.push(*button);
+            body.push(u8::from(*down));
         }
         Frame::Wheel { dx, dy } => {
             body.push(WHEEL);
@@ -152,7 +201,7 @@ pub fn encode(frame: &Frame, out: &mut Vec<u8>) {
         Frame::Key { hid, down } => {
             body.push(KEY);
             body.extend_from_slice(&hid.to_le_bytes());
-            body.push(u8::from(down));
+            body.push(u8::from(*down));
         }
         Frame::Heartbeat => body.push(HEARTBEAT),
         Frame::Release => body.push(RELEASE),
@@ -193,13 +242,28 @@ fn decode_body(body: &[u8]) -> Result<Frame, DecodeError> {
             if rest.len() != 6 && rest.len() != 7 {
                 return Err(DecodeError);
             }
+            let caps = if rest.len() == 7 { rest[6] } else { 0 };
             Ok(Frame::HelloAck {
                 logical_w: u16::from_le_bytes(rest[0..2].try_into().unwrap()),
                 logical_h: u16::from_le_bytes(rest[2..4].try_into().unwrap()),
                 scale_milli: u16::from_le_bytes(rest[4..6].try_into().unwrap()),
-                accepts_config: rest.len() == 7 && rest[6] != 0,
+                accepts_config: caps & CAP_CONFIG != 0,
+                accepts_inbox: caps & CAP_INBOX != 0,
             })
         }
+        INBOX_HELLO => {
+            if rest.is_empty() || rest.len() > 64 {
+                return Err(DecodeError);
+            }
+            let name = std::str::from_utf8(rest).map_err(|_| DecodeError)?;
+            if !plain_name(name) {
+                return Err(DecodeError);
+            }
+            Ok(Frame::InboxHello {
+                name: name.to_string(),
+            })
+        }
+        NOTE => decode_note(rest),
         ENTER => {
             if rest.len() != 8 {
                 return Err(DecodeError);
@@ -252,6 +316,68 @@ fn decode_body(body: &[u8]) -> Result<Frame, DecodeError> {
     }
 }
 
+fn decode_note(rest: &[u8]) -> Result<Frame, DecodeError> {
+    if rest.len() < 11 {
+        return Err(DecodeError);
+    }
+    let id = u32::from_le_bytes(rest[0..4].try_into().unwrap());
+    let rev = u32::from_le_bytes(rest[4..8].try_into().unwrap());
+    let deleted = rest[8];
+    if id == 0 || rev == 0 || deleted > 1 {
+        return Err(DecodeError);
+    }
+    let (from, rest) = take_counted(&rest[9..])?;
+    if !plain_name(from) {
+        return Err(DecodeError);
+    }
+    let (to, text_bytes) = take_counted(rest)?;
+    if !to.is_empty() && !plain_name(to) {
+        return Err(DecodeError);
+    }
+    let text = std::str::from_utf8(text_bytes).map_err(|_| DecodeError)?;
+    if text.len() > MAX_NOTE_TEXT || text.chars().any(|c| c == '\t' || c == '\n' || c == '\r') {
+        return Err(DecodeError);
+    }
+    Ok(Frame::Note {
+        id,
+        rev,
+        deleted: deleted == 1,
+        from: from.to_string(),
+        to: to.to_string(),
+        text: text.to_string(),
+    })
+}
+
+fn push_counted(body: &mut Vec<u8>, text: &str) {
+    let bytes = text.as_bytes();
+    let n = bytes.len().min(64);
+    body.push(n as u8);
+    body.extend_from_slice(&bytes[..n]);
+}
+
+fn take_counted(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
+    let n = *buf.first().ok_or(DecodeError)? as usize;
+    if n > 64 || buf.len() < 1 + n {
+        return Err(DecodeError);
+    }
+    let text = std::str::from_utf8(&buf[1..1 + n]).map_err(|_| DecodeError)?;
+    Ok((text, &buf[1 + n..]))
+}
+
+fn plain_name(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    text.chars()
+        .all(|c| c.is_ascii_alphabetic() || c == ' ' || c == '-' || c == '\'')
+        && !text.ends_with(' ')
+        && !text.contains("  ")
+}
+
 fn empty(rest: &[u8], frame: Frame) -> Result<Frame, DecodeError> {
     if rest.is_empty() {
         Ok(frame)
@@ -291,6 +417,18 @@ mod tests {
                 logical_h: 1169,
                 scale_milli: 2000,
                 accepts_config: true,
+                accepts_inbox: true,
+            },
+            Frame::InboxHello {
+                name: "Ada West".into(),
+            },
+            Frame::Note {
+                id: 9,
+                rev: 2,
+                deleted: false,
+                from: "Ada West".into(),
+                to: "Bea North".into(),
+                text: "buy milk".into(),
             },
             Frame::Config { edge: Edge::Left },
             Frame::Enter {
@@ -346,8 +484,49 @@ mod tests {
                 logical_h: 1169,
                 scale_milli: 1000,
                 accepts_config: false,
+                accepts_inbox: false,
             }
         );
+    }
+
+    #[test]
+    fn capability_bits_keep_an_old_config_byte_working() {
+        match hello_ack_with_caps(CAP_CONFIG) {
+            Frame::HelloAck {
+                accepts_config: true,
+                accepts_inbox: false,
+                ..
+            } => {}
+            other => panic!("config bit {other:?}"),
+        }
+        match hello_ack_with_caps(CAP_CONFIG | CAP_INBOX) {
+            Frame::HelloAck {
+                accepts_config: true,
+                accepts_inbox: true,
+                ..
+            } => {}
+            other => panic!("both bits {other:?}"),
+        }
+        match hello_ack_with_caps(CAP_INBOX) {
+            Frame::HelloAck {
+                accepts_config: false,
+                accepts_inbox: true,
+                ..
+            } => {}
+            other => panic!("inbox bit {other:?}"),
+        }
+    }
+
+    fn hello_ack_with_caps(caps: u8) -> Frame {
+        let mut body = vec![HELLO_ACK];
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&1000u16.to_le_bytes());
+        body.push(caps);
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&body);
+        decode(&buf).unwrap().unwrap().0
     }
 
     #[test]

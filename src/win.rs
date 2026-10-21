@@ -2,6 +2,7 @@
 //! They do not touch the socket. Raw input is read on this thread.
 
 use crate::ballistics::Ballistics;
+use crate::inbox::Store;
 use crate::desk::{Desk, Edge, Mon};
 use crate::frame::{Frame, VERSION};
 use crate::hid;
@@ -85,6 +86,8 @@ struct Session {
     settings_mtime: Option<SystemTime>,
     settings_checked: Instant,
     accepts_config: bool,
+    accepts_inbox: bool,
+    inbox: Store,
 }
 
 pub fn run(
@@ -123,6 +126,8 @@ pub fn run(
         settings_mtime,
         settings_checked: Instant::now(),
         accepts_config: false,
+        accepts_inbox: false,
+        inbox: Store::attach(crate::inbox::path_for(settings_path)),
     };
     let window = message_window()?;
     register_raw(window)?;
@@ -226,12 +231,14 @@ fn dispatch(session: &mut Session, frame: Frame) {
             logical_h,
             scale_milli,
             accepts_config,
+            accepts_inbox,
         } => {
             eprintln!(
                 "bezel: mac {logical_w}x{logical_h} scale {:.2}",
                 f64::from(scale_milli) / 1000.0
             );
             session.accepts_config = accepts_config;
+            session.accepts_inbox = accepts_inbox;
             session.greeted = true;
             let edge = session.machine.edge();
             eprintln!("bezel: edge {}", edge.as_str());
@@ -243,7 +250,29 @@ fn dispatch(session: &mut Session, frame: Frame) {
             } else {
                 eprintln!("bezel: mac cannot take the edge yet");
             }
+            if accepts_inbox {
+                let hello = session.inbox.greet();
+                if !try_send(session, &hello) {
+                    fail_link(session);
+                    return;
+                }
+            }
             enact(session, Event::PeerUp { now });
+        }
+        Frame::InboxHello { .. } | Frame::Note { .. } => {
+            if !session.accepts_inbox {
+                return;
+            }
+            let replies = match session.inbox.observe(frame) {
+                Ok(frames) => frames,
+                Err(_) => return,
+            };
+            for reply in replies {
+                if !try_send(session, &reply) {
+                    fail_link(session);
+                    return;
+                }
+            }
         }
         Frame::EnterAck { seq } => enact(session, Event::EnterAck { seq, now }),
         Frame::Leave => enact(session, Event::Leave { now }),
@@ -299,6 +328,8 @@ fn try_send(session: &mut Session, frame: &Frame) -> bool {
 }
 
 fn fail_link(session: &mut Session) {
+    session.accepts_inbox = false;
+    session.inbox.pause();
     let was_up = session.greeted;
     if session.link.is_none() && !was_up && session.hello_at.is_none() {
         return;
@@ -307,6 +338,7 @@ fn fail_link(session: &mut Session) {
     session.link = None;
     session.greeted = false;
     session.accepts_config = false;
+    session.accepts_inbox = false;
     session.hello_at = None;
     SWALLOW.store(false, Ordering::SeqCst);
     if !was_up {
@@ -363,6 +395,7 @@ fn refresh_settings(session: &mut Session) {
         return;
     }
     session.settings_checked = Instant::now();
+    sync_inbox(session);
     let modified = match std::fs::metadata(&session.settings_path).and_then(|meta| meta.modified()) {
         Ok(modified) => modified,
         Err(_) => return,
@@ -396,6 +429,22 @@ fn refresh_settings(session: &mut Session) {
     session.scaler.set_scale(file.scale);
     if session.scaler.scale() != previous {
         eprintln!("bezel: scale {}", format_scale(session.scaler.scale()));
+    }
+}
+
+fn sync_inbox(session: &mut Session) {
+    let frames = match session.inbox.poll() {
+        Ok(frames) => frames,
+        Err(_) => return,
+    };
+    if !session.greeted || !session.accepts_inbox {
+        return;
+    }
+    for frame in frames {
+        if !try_send(session, &frame) {
+            fail_link(session);
+            return;
+        }
     }
 }
 
