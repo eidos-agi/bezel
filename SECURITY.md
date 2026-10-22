@@ -24,4 +24,4 @@ We will acknowledge your report within 48 hours and aim to provide a fix within 
 
 We follow coordinated disclosure. Please give us reasonable time to address the issue before public disclosure.
 
-Release binaries are attached to GitHub Releases by the repository's own workflow. That workflow uses the short-lived `GITHUB_TOKEN`. There is no long-lived publish token in the repo.
+Release binaries are attached to GitHub Releases by the repository's own workflow. That workflow uses the short-lived `GITHUB_TOKEN`. There is no long-lived publish token in the repo. The Windows code-signing private key is not in the repo either.

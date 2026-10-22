@@ -15,6 +15,16 @@ Download the binary for this machine from the [latest release](https://github.co
 
 The release is three binaries: `bezel-x86_64-pc-windows-msvc.exe`, `bezel-aarch64-apple-darwin`, and `bezel-x86_64-apple-darwin`.
 
+## Windows and Smart App Control
+
+A new unsigned Windows build is a different file. Smart App Control blocks it. The copy that is already running keeps its hash and still starts.
+
+A certificate created on this PC is not enough by itself. Windows records that signature as self-signed, leaves the signing level at 1, and reports error 18. The enforced policy is VerifiedAndReputableDesktop, `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`. That policy allows a supplemental policy, and script enforcement is off.
+
+This PC has supplemental policy `{b3e2e1a0-7c4d-4f11-9a2e-be2e10001010}`, named Bezel code signing. It allows one RSA signer, `CN=eidos-agi bezel`, and lists that signer for user-mode code. The certificate is in the machine Root and TrustedPublisher stores. The private key stays in the user store and is not in this repository. The exe is signed with SHA-256 and a timestamp. Smart App Control stays on. The signed 0.1.10 binary then starts.
+
+The running file is `bezel-0.1.10-clean.exe`. An unsigned copy of the same release does not start.
+
 ## Run
 
 On the Mac, after Rust is installed:
@@ -82,7 +92,7 @@ Cross, click, type a word, scroll, and cross back. Hold Shift across the edge, r
 
 A normal process cannot see keys typed into an elevated window. The secure desktop, including the UAC prompt, stays on Windows. Ctrl+Alt+Del stays on Windows.
 
-This PC compiled the Windows binary and `bezel fake`, and the tests passed. It cannot verify CoreGraphics injection, the Accessibility grant, or a live cross onto the Mac. Smart App Control on this PC then blocked the unsigned binary.
+This PC compiled the Windows binary and `bezel fake`, and the tests passed. It cannot verify CoreGraphics injection, the Accessibility grant, or a live cross onto the Mac. An unsigned new build is blocked here. The signed build described above is the one that starts.
 
 This tree is original. Deskflow and Lan Mouse are GPL, and their source is not copied here.
 

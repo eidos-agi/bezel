@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Document the supplemental App Control policy that lets this PC run a bezel signed by `CN=eidos-agi bezel`. Smart App Control stays on.
+
 ## [0.1.10] - 2026-10-22
 
 ### Added
