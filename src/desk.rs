@@ -66,6 +66,19 @@ impl Desk {
         Self { monitors }
     }
 
+    pub fn monitors(&self) -> &[Mon] {
+        &self.monitors
+    }
+
+    /// True when a move outward from this monitor can leave the desktop.
+    /// A gap counts. A seam where another screen touches does not.
+    pub fn edge_open(&self, mon: &Mon, edge: Edge) -> bool {
+        if mon.w <= 1 || mon.h <= 0 {
+            return false;
+        }
+        (0..mon.h).any(|dy| self.outer(mon, edge, mon.y.saturating_add(dy)))
+    }
+
     pub fn arms(&self, edge: Edge, x: i32, y: i32, dx: i32) -> bool {
         let outward = match edge {
             Edge::Left => dx < 0,
@@ -198,5 +211,29 @@ mod tests {
         let cross = desk.crossing(Edge::Right, 1919, 100).unwrap();
         assert_eq!(cross.park_x, 1918);
         assert_eq!(cross.span, 1200);
+    }
+
+    #[test]
+    fn a_gap_is_open_and_a_seam_is_not() {
+        let desk = darwin_desk();
+        let mons = desk.monitors();
+        assert!(desk.edge_open(&mons[0], Edge::Left));
+        assert!(!desk.edge_open(&mons[1], Edge::Left));
+        assert!(desk.edge_open(&mons[2], Edge::Left));
+
+        let gap = Desk::new(vec![
+            Mon { x: -3840, y: 0, w: 2560, h: 1440, primary: false },
+            Mon { x: 0, y: 0, w: 1920, h: 1200, primary: true },
+        ]);
+        assert!(gap.monitors().iter().all(|mon| gap.edge_open(mon, Edge::Left)));
+
+        let touching = Desk::new(vec![
+            Mon { x: 0, y: 0, w: 1920, h: 1080, primary: true },
+            Mon { x: 1920, y: 0, w: 1920, h: 1080, primary: false },
+        ]);
+        assert!(touching.edge_open(&touching.monitors()[0], Edge::Left));
+        assert!(!touching.edge_open(&touching.monitors()[1], Edge::Left));
+        assert!(!touching.edge_open(&touching.monitors()[0], Edge::Right));
+        assert!(touching.edge_open(&touching.monitors()[1], Edge::Right));
     }
 }

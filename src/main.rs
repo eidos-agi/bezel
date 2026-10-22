@@ -35,6 +35,7 @@ fn run() -> io::Result<()> {
             println!("{}", bezel::upgrade::current_version());
             Ok(())
         }
+        Some("doctor") => doctor_cmd(&args[1..]),
         Some("inbox") => inbox_cmd(&args[1..]),
         Some("report") => report_cmd(&args[1..]),
         Some("fake") => {
@@ -118,6 +119,29 @@ fn update(args: &[String]) -> io::Result<()> {
         ));
     }
     println!("bezel: {reply}");
+    Ok(())
+}
+
+fn doctor_cmd(args: &[String]) -> io::Result<()> {
+    let path = config_path(args);
+    let mut settings = settings::load(&path)?;
+    if let Some(port) = flag_u16(args, "--port")? {
+        settings.port = port;
+    }
+    if let Some(scale) = flag_f64(args, "--scale")? {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(io::Error::new(ErrorKind::InvalidInput, "bad --scale"));
+        }
+        settings.scale = scale;
+    }
+    if let Some(edge) = flag_str(args, "--edge") {
+        settings.edge = Edge::parse(&edge.to_ascii_lowercase())
+            .map_err(|err| io::Error::new(ErrorKind::InvalidInput, err))?;
+    }
+    if let Some(allow) = flag_str(args, "--allow") {
+        settings.allow = allow.to_string();
+    }
+    println!("{}", bezel::doctor::checkup(&settings, &path));
     Ok(())
 }
 
@@ -275,6 +299,7 @@ bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [
 bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--debug] [--no-upgrade]
 bezel who
 bezel version
+bezel doctor
 bezel inbox
 bezel inbox add <text>
 bezel inbox update <id> <text>
@@ -288,6 +313,7 @@ Settings: {path}
 Flags override the file until the file is saved again. Windows sends the edge on the connection.
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
 bezel who prints the stable name of this machine. bezel version prints this release.
+bezel doctor says who is connected and whether a move off the chosen edge could hand the pointer over. It does not move the pointer or open the connection.
 bezel inbox changes the shared messages.
 Windows and the Mac each file a GitHub issue when a problem happens. bezel report files one now.
 --debug prints each key and whether it was sent. BEZEL_DEBUG=1 does the same. The lines stay on the console.

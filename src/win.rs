@@ -680,6 +680,11 @@ fn read_raw(lparam: LPARAM) -> Option<RAWINPUT> {
     Some(unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const RAWINPUT) })
 }
 
+pub(crate) fn screens() -> io::Result<Desk> {
+    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    monitors()
+}
+
 fn monitors() -> io::Result<Desk> {
     let mut found = Vec::new();
     let data = LPARAM(&mut found as *mut Vec<Mon> as isize);

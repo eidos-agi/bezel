@@ -4,6 +4,7 @@
 pub mod allow;
 pub mod ballistics;
 pub mod desk;
+pub mod doctor;
 pub mod fake;
 pub mod frame;
 pub mod hid;

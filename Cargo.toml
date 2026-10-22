@@ -1,6 +1,6 @@
 [package]
 name = "bezel"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 description = "Move the pointer from Windows onto the Mac across one screen edge."
 publish = false
@@ -17,6 +17,7 @@ categories = ["command-line-utilities"]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_NetworkManagement_IpHelper",
     "Win32_System_LibraryLoader",
     "Win32_UI_HiDpi",
     "Win32_UI_Input",
