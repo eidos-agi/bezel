@@ -54,7 +54,7 @@ A listener from before this build has no edge frame. Windows sees that in the he
 
 ## Inbox
 
-`bezel version` prints the release, such as `0.1.9`. `bezel who` prints this machine's name. The name is hashed from the operating system id, so the same computer keeps it. `bezel doctor` says who is connected and whether a move off the chosen edge could hand the pointer to the other machine. It reads the screens and the open connection. It does not move the pointer and it does not open a new one. `bezel inbox` lists messages in `inbox.txt` next to the settings file. `bezel inbox add`, `update`, and `delete` change that file. While `bezel --to` and `bezel listen` are connected, each side picks up the other's changes. A message records who wrote it and who it is for. An older bezel on the other end never sees these frames.
+`bezel version` prints the release, such as `0.1.10`. `bezel who` prints this machine's name. The name is hashed from the operating system id, so the same computer keeps it. `bezel doctor` says who is connected, whether a move off the chosen edge could hand the pointer to the other machine, and lists the shared messages. `bezel doctor add`, `update`, and `delete` change those messages. The running bezel sends the change. Doctor does not move the pointer and it does not open a connection. `bezel inbox` is the same message file. While `bezel --to` and `bezel listen` are connected, each side picks up the other's changes. A message records who wrote it and who it is for. An older bezel on the other end never sees these frames.
 
 ## Problems
 

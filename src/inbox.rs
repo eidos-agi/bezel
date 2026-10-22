@@ -72,6 +72,14 @@ impl Store {
         &self.notes
     }
 
+    /// Who the next new message is for. The running capture learns this from
+    /// the other machine. A one-shot command can set it from the inbox.
+    pub fn set_peer(&mut self, name: &str) {
+        if !name.is_empty() {
+            self.peer = name.to_string();
+        }
+    }
+
     pub fn greet(&mut self) -> Frame {
         self.sent.clear();
         self.said = true;

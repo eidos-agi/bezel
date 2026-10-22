@@ -124,25 +124,66 @@ fn update(args: &[String]) -> io::Result<()> {
 
 fn doctor_cmd(args: &[String]) -> io::Result<()> {
     let path = config_path(args);
-    let mut settings = settings::load(&path)?;
-    if let Some(port) = flag_u16(args, "--port")? {
-        settings.port = port;
-    }
-    if let Some(scale) = flag_f64(args, "--scale")? {
-        if !scale.is_finite() || scale <= 0.0 {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "bad --scale"));
+    let rest = without_config(args);
+    match rest.first().map(String::as_str) {
+        Some("add") => {
+            if rest.len() < 2 {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "missing message"));
+            }
+            let note = bezel::doctor::add_message(&path, &rest[1..].join(" "))?;
+            println!("{}", note.id);
+            if note.to.is_empty() {
+                println!("saved. The running bezel sends it on the open connection.");
+            } else {
+                println!(
+                    "saved for {}. The running bezel sends it on the open connection.",
+                    note.to
+                );
+            }
+            Ok(())
         }
-        settings.scale = scale;
+        Some("update") => {
+            if rest.len() < 3 {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "missing message"));
+            }
+            let id = parse_id(&rest[1])?;
+            bezel::doctor::update_message(&path, id, &rest[2..].join(" "))?;
+            println!("updated {id}");
+            Ok(())
+        }
+        Some("delete") => {
+            if rest.len() != 2 {
+                return Err(io::Error::new(ErrorKind::InvalidInput, "missing id"));
+            }
+            let id = parse_id(&rest[1])?;
+            bezel::doctor::delete_message(&path, id)?;
+            println!("deleted {id}");
+            Ok(())
+        }
+        _ => {
+            let mut settings = settings::load(&path)?;
+            if let Some(port) = flag_u16(args, "--port")? {
+                settings.port = port;
+            }
+            if let Some(scale) = flag_f64(args, "--scale")? {
+                if !scale.is_finite() || scale <= 0.0 {
+                    return Err(io::Error::new(ErrorKind::InvalidInput, "bad --scale"));
+                }
+                settings.scale = scale;
+            }
+            if let Some(edge) = flag_str(args, "--edge") {
+                settings.edge = Edge::parse(&edge.to_ascii_lowercase())
+                    .map_err(|err| io::Error::new(ErrorKind::InvalidInput, err))?;
+            }
+            if let Some(allow) = flag_str(args, "--allow") {
+                settings.allow = allow.to_string();
+            }
+            let messages = bezel::doctor::read_messages(&path)
+                .unwrap_or_else(|err| format!("messages: {err}"));
+            println!("{}\n{messages}", bezel::doctor::checkup(&settings, &path));
+            Ok(())
+        }
     }
-    if let Some(edge) = flag_str(args, "--edge") {
-        settings.edge = Edge::parse(&edge.to_ascii_lowercase())
-            .map_err(|err| io::Error::new(ErrorKind::InvalidInput, err))?;
-    }
-    if let Some(allow) = flag_str(args, "--allow") {
-        settings.allow = allow.to_string();
-    }
-    println!("{}", bezel::doctor::checkup(&settings, &path));
-    Ok(())
 }
 
 fn report_cmd(args: &[String]) -> io::Result<()> {
@@ -300,6 +341,9 @@ bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--debug] [--no
 bezel who
 bezel version
 bezel doctor
+bezel doctor add <text>
+bezel doctor update <id> <text>
+bezel doctor delete <id>
 bezel inbox
 bezel inbox add <text>
 bezel inbox update <id> <text>
@@ -314,7 +358,8 @@ Flags override the file until the file is saved again. Windows sends the edge on
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
 bezel who prints the stable name of this machine. bezel version prints this release.
 bezel doctor says who is connected and whether a move off the chosen edge could hand the pointer over. It does not move the pointer or open the connection.
-bezel inbox changes the shared messages.
+bezel doctor add, update, and delete change the shared messages. The running bezel sends them. bezel doctor lists them.
+bezel inbox changes the same messages.
 Windows and the Mac each file a GitHub issue when a problem happens. bezel report files one now.
 --debug prints each key and whether it was sent. BEZEL_DEBUG=1 does the same. The lines stay on the console.
 bezel update sends this tree to the Mac, which builds it and restarts listen.

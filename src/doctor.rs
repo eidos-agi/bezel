@@ -98,6 +98,57 @@ pub fn render(facts: &Facts) -> String {
 
 /// The other machine's name, from notes that are still live.
 /// The note text is ignored.
+/// Live messages. Deleted rows stay in the file and stay out of this list.
+pub fn message_lines(notes: &[Note]) -> String {
+    let visible: Vec<&Note> = notes.iter().filter(|note| !note.deleted).collect();
+    if visible.is_empty() {
+        return "messages: none".to_string();
+    }
+    let mut lines = Vec::with_capacity(visible.len() + 1);
+    lines.push("messages".to_string());
+    for note in visible {
+        if note.to.is_empty() {
+            lines.push(format!("{} {} {}", note.id, note.from, note.text));
+        } else {
+            lines.push(format!(
+                "{} {} -> {} {}",
+                note.id, note.from, note.to, note.text
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+pub fn read_messages(settings: &Path) -> io::Result<String> {
+    let store = inbox::Store::open(inbox::path_for(settings))?;
+    Ok(message_lines(store.notes()))
+}
+
+pub fn add_message(settings: &Path, text: &str) -> io::Result<Note> {
+    let mut store = inbox::Store::open(inbox::path_for(settings))?;
+    address(&mut store);
+    store.add(text)
+}
+
+pub fn update_message(settings: &Path, id: u32, text: &str) -> io::Result<()> {
+    let mut store = inbox::Store::open(inbox::path_for(settings))?;
+    address(&mut store);
+    store.update(id, text)
+}
+
+pub fn delete_message(settings: &Path, id: u32) -> io::Result<()> {
+    let mut store = inbox::Store::open(inbox::path_for(settings))?;
+    address(&mut store);
+    store.delete(id)
+}
+
+fn address(store: &mut inbox::Store) {
+    let here = who::name();
+    if let Some(peer) = other_name(store.notes(), &here) {
+        store.set_peer(&peer);
+    }
+}
+
 pub fn other_name(notes: &[Note], here: &str) -> Option<String> {
     let mut best: Option<(u32, String)> = None;
     for note in notes.iter().filter(|note| !note.deleted) {
@@ -657,6 +708,53 @@ tcp4       0      0  100.84.4.24.22         100.72.135.59.22       ESTABLISHED
         assert_eq!(ipv4_from_dword(0x0100_000A), Ipv4Addr::new(10, 0, 0, 1));
         // 47940 is network order 0x44BB in the low half of the dword.
         assert_eq!(win_port(0x0000_44BB), 47940);
+    }
+
+    #[test]
+    fn deleted_messages_stay_out_of_the_list() {
+        let notes = vec![
+            note(1, true, "Williams Schooley", "Gray Castleberry", "secret tombstone"),
+            note(2, false, "Williams Schooley", "Gray Castleberry", "still here"),
+        ];
+        let text = message_lines(&notes);
+        assert!(text.contains("still here"));
+        assert!(text.contains("Williams Schooley -> Gray Castleberry"));
+        assert!(!text.contains("secret tombstone"));
+    }
+
+    #[test]
+    fn doctor_addresses_a_message_to_the_other_machine() {
+        let root = std::env::temp_dir().join(format!(
+            "bezel-doctor-{}-{}",
+            std::process::id(),
+            ipv4_from_dword(0x0100_000A).octets()[0]
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let settings = root.join("settings.toml");
+        let mut store = inbox::Store::open(inbox::path_for(&settings)).unwrap();
+        store
+            .observe(crate::frame::Frame::Note {
+                id: 7,
+                rev: 1,
+                deleted: false,
+                from: "Williams Schooley".into(),
+                to: who::name(),
+                text: "connected".into(),
+            })
+            .unwrap();
+        let note = add_message(&settings, "the open edge is the far left").unwrap();
+        assert_eq!(note.from, who::name());
+        assert_eq!(note.to, "Williams Schooley");
+        update_message(&settings, note.id, "still the far left").unwrap();
+        let listed = read_messages(&settings).unwrap();
+        assert!(listed.contains("still the far left"));
+        assert!(!listed.contains("the open edge is the far left"));
+        delete_message(&settings, note.id).unwrap();
+        let listed = read_messages(&settings).unwrap();
+        assert!(!listed.contains("still the far left"));
+        assert!(listed.contains("connected"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn proc_endpoint(ip: Ipv4Addr, port: u16) -> String {
