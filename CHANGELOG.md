@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-22
+
 ### Added
 
-- Document the supplemental App Control policy that lets this PC run a bezel signed by `CN=eidos-agi bezel`. Smart App Control stays on.
+- Document the supplemental App Control policy that lets this PC run a bezel signed by `CN=eidos-agi bezel`. Smart App Control stays on. The Windows release asset is signed with that certificate.
 
 ## [0.1.10] - 2026-10-22
 
