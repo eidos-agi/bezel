@@ -1,7 +1,7 @@
 use bezel::desk::Edge;
 use bezel::inbox::{self, Note};
 use bezel::settings::{self, Settings};
-use bezel::{fake, who, DEFAULT_MAC, DEFAULT_PORT, DEFAULT_WINDOWS};
+use bezel::{fake, who, DEFAULT_PORT};
 use std::env;
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
@@ -31,6 +31,12 @@ fn run() -> io::Result<()> {
             println!("{}", who::name());
             Ok(())
         }
+        Some("host") => bezel::host::print(),
+        Some("status") => {
+            let path = config_path(&args[1..]);
+            bezel::status::show(&path)
+        }
+        Some("install") => bezel::install::install(),
         Some("version") => {
             println!("{}", bezel::upgrade::current_version());
             Ok(())
@@ -54,6 +60,13 @@ fn run() -> io::Result<()> {
                 settings.host = host;
             }
             arm_debug(rest);
+            bezel::report::configure(&settings.report);
+            if settings.host.is_empty() {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "host is unset. Run bezel host on the other machine and write that name here.",
+                ));
+            }
             capture(&settings, &path, !flag_present(rest, "--no-upgrade"))
         }
         Some(other) => Err(io::Error::new(
@@ -88,17 +101,25 @@ fn capture(settings: &Settings, config: &std::path::Path, upgrade: bool) -> io::
 fn listen(args: &[String]) -> io::Result<()> {
     arm_debug(args);
     let (settings, path) = load_settings(args)?;
+    bezel::report::configure(&settings.report);
+    if settings.allow.is_empty() {
+        eprintln!("bezel: allow is unset. Run bezel host on Windows and write that name here.");
+    }
     let upgrade = !flag_present(args, "--no-upgrade");
     #[cfg(target_os = "macos")]
     {
         bezel::mac::listen(settings.port, &settings.allow, upgrade, &path)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        bezel::linux::listen(settings.port, &settings.allow, upgrade, &path)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (settings, path, upgrade);
         Err(io::Error::new(
             ErrorKind::Unsupported,
-            "bezel listen runs on the Mac",
+            "bezel listen runs on the Mac or on Linux",
         ))
     }
 }
@@ -187,6 +208,8 @@ fn doctor_cmd(args: &[String]) -> io::Result<()> {
 }
 
 fn report_cmd(args: &[String]) -> io::Result<()> {
+    let (settings, _) = load_settings(args)?;
+    bezel::report::configure(&settings.report);
     let rest = without_config(args);
     if rest.is_empty() {
         return Err(io::Error::new(ErrorKind::InvalidInput, "missing problem"));
@@ -336,9 +359,12 @@ fn print_usage() {
     let path = settings::default_path().display().to_string();
     println!(
         "\
-bezel --to [{DEFAULT_MAC}] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--debug] [--no-upgrade]
-bezel listen [--port {DEFAULT_PORT}] [--allow {DEFAULT_WINDOWS}] [--debug] [--no-upgrade]
+bezel --to [host] [--port {DEFAULT_PORT}] [--scale 1.0] [--edge left] [--debug] [--no-upgrade]
+bezel listen [--port {DEFAULT_PORT}] [--allow host] [--debug] [--no-upgrade]
 bezel who
+bezel host
+bezel status
+bezel install
 bezel version
 bezel doctor
 bezel doctor add <text>
@@ -356,11 +382,14 @@ bezel fake [--port {DEFAULT_PORT}]
 Settings: {path}
 Flags override the file until the file is saved again. Windows sends the edge on the connection.
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
-bezel who prints the stable name of this machine. bezel version prints this release.
+bezel who prints the stable name of this machine. bezel host prints its MagicDNS name.
+bezel status prints what the running copy last recorded. It does not move the pointer or open a connection.
+bezel install writes the service and starts it when nothing is running. The operating system still asks once.
+bezel version prints this release.
 bezel doctor says who is connected and whether a move off the chosen edge could hand the pointer over. It does not move the pointer or open the connection.
 bezel doctor add, update, and delete change the shared messages. The running bezel sends them. bezel doctor lists them.
 bezel inbox changes the same messages.
-Windows and the Mac each file a GitHub issue when a problem happens. bezel report files one now.
+bezel report files a problem only when settings set report to owner/name and a GitHub token is present. Otherwise it stays quiet.
 --debug prints each key and whether it was sent. BEZEL_DEBUG=1 does the same. The lines stay on the console.
 bezel update sends this tree to the Mac, which builds it and restarts listen.
 

@@ -7,6 +7,7 @@ use crate::inbox::{self, Note};
 use crate::net;
 use crate::settings::Settings;
 use crate::who;
+#[cfg_attr(target_os = "linux", allow(unused_imports))]
 use std::io::{self, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -443,10 +444,12 @@ fn split_v4(text: &str) -> Option<(Ipv4Addr, u16)> {
     Some((host.parse().ok()?, port.parse().ok()?))
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn ipv4_from_dword(addr: u32) -> Ipv4Addr {
     Ipv4Addr::from(u32::from_be(addr))
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn win_port(value: u32) -> u16 {
     u16::from_be(value as u16)
 }

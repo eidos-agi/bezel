@@ -1,8 +1,8 @@
 [package]
 name = "bezel"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2021"
-description = "Move the pointer from Windows onto the Mac across one screen edge."
+description = "Move the pointer from Windows onto another machine across one screen edge."
 publish = false
 license = "MIT"
 repository = "https://github.com/eidos-agi/bezel"
@@ -19,6 +19,7 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_IpHelper",
     "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
     "Win32_UI_HiDpi",
     "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",
@@ -28,3 +29,7 @@ windows = { version = "0.58", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = { version = "0.23.2", features = ["highsierra"] }
 foreign-types = "0.5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+serde = "1"
+zbus = "4.4"

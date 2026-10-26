@@ -6,6 +6,7 @@
 //! 10,000 most common surnames in the 2010 Census. Both are US government work.
 //! Each file is alphabetical.
 
+#[cfg(any(windows, target_os = "macos"))]
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};

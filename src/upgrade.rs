@@ -66,10 +66,15 @@ pub fn expected_asset() -> Option<&'static str> {
     {
         Some("bezel-x86_64-apple-darwin")
     }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        Some("bezel-x86_64-unknown-linux-gnu")
+    }
     #[cfg(not(any(
         all(target_os = "windows", target_arch = "x86_64"),
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "x86_64"),
     )))]
     {
         None
@@ -96,7 +101,8 @@ pub fn looks_like_binary(bytes: &[u8]) -> bool {
             | [0xCE, 0xFA, 0xED, 0xFE]
             | [0xFE, 0xED, 0xFA, 0xCE]
     );
-    mz || macho
+    let elf = bytes.starts_with(&[0x7F, b'E', b'L', b'F']);
+    mz || macho || elf
 }
 
 /// Check soon, then every six hours. A newer release is printed once. Nothing is installed.
@@ -363,6 +369,7 @@ mod tests {
     fn a_binary_starts_with_its_magic() {
         assert!(looks_like_binary(b"MZ\x90\x00rest"));
         assert!(looks_like_binary(&[0xCF, 0xFA, 0xED, 0xFE]));
+        assert!(looks_like_binary(&[0x7F, b'E', b'L', b'F']));
         assert!(!looks_like_binary(b"<htm"));
         assert!(!looks_like_binary(b"MZ"));
     }

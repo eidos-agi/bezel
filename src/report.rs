@@ -1,7 +1,7 @@
 //! Both machines file a problem on the GitHub repo. An open issue with the
 //! same title gets a comment. The token is never printed.
 
-use crate::upgrade::{self, REPO};
+use crate::upgrade;
 use crate::who;
 use std::collections::BTreeSet;
 use std::io::{self, ErrorKind, Write};
@@ -11,8 +11,44 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static FILED: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+static REPO: Mutex<Option<String>> = Mutex::new(None);
+
+/// Problems are filed only when this is an `owner/name` repo. Empty stays quiet.
+pub fn configure(repo: &str) {
+    let repo = repo.trim();
+    let value = if repo.is_empty() || !repo_ok(repo) {
+        None
+    } else {
+        Some(repo.to_string())
+    };
+    *REPO.lock().unwrap_or_else(|err| err.into_inner()) = value;
+}
+
+fn repo_ok(repo: &str) -> bool {
+    let mut parts = repo.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(owner), Some(name), None) => {
+            !owner.is_empty()
+                && !name.is_empty()
+                && owner
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+        }
+        _ => false,
+    }
+}
+
+fn configured_repo() -> Option<String> {
+    REPO.lock().unwrap_or_else(|err| err.into_inner()).clone()
+}
 
 pub fn submit(kind: &'static str, summary: &str) {
+    if configured_repo().is_none() {
+        return;
+    }
     let mut filed = FILED.lock().unwrap_or_else(|err| err.into_inner());
     if !filed.insert(kind) {
         return;
@@ -32,17 +68,20 @@ pub fn file_now(kind: &str, summary: &str) -> io::Result<()> {
 }
 
 fn file(kind: &str, summary: &str) -> io::Result<String> {
+    let repo = configured_repo().ok_or_else(|| {
+        io::Error::new(ErrorKind::NotFound, "report repo is unset")
+    })?;
     let token = github_token().ok_or_else(|| {
         io::Error::new(ErrorKind::PermissionDenied, "no GitHub token")
     })?;
     let title = format!("bezel: {kind}");
     let body = render(summary);
-    let number = open_issue(&title, &token)?;
+    let number = open_issue(&repo, &title, &token)?;
     let url = if let Some(number) = number {
-        comment(number, &body, &token)?;
-        format!("https://github.com/{REPO}/issues/{number}")
+        comment(&repo, number, &body, &token)?;
+        format!("https://github.com/{repo}/issues/{number}")
     } else {
-        create(&title, &body, &token)?
+        create(&repo, &title, &body, &token)?
     };
     Ok(url)
 }
@@ -62,12 +101,12 @@ fn os_name() -> &'static str {
     } else if cfg!(target_os = "macos") {
         "macos"
     } else {
-        "other"
+        "linux"
     }
 }
 
-fn open_issue(title: &str, token: &str) -> io::Result<Option<u64>> {
-    let query = format!("repo:{REPO} is:open in:title \"{title}\"");
+fn open_issue(repo: &str, title: &str, token: &str) -> io::Result<Option<u64>> {
+    let query = format!("repo:{repo} is:open in:title \"{title}\"");
     let url = format!(
         "https://api.github.com/search/issues?q={}",
         url_encode(&query)
@@ -79,22 +118,22 @@ fn open_issue(title: &str, token: &str) -> io::Result<Option<u64>> {
     Ok(issue_number(&json))
 }
 
-fn create(title: &str, body: &str, token: &str) -> io::Result<String> {
+fn create(repo: &str, title: &str, body: &str, token: &str) -> io::Result<String> {
     let payload = format!(
         "{{\"title\":\"{}\",\"body\":\"{}\"}}",
         json_escape(title),
         json_escape(body)
     );
-    let url = format!("https://api.github.com/repos/{REPO}/issues");
+    let url = format!("https://api.github.com/repos/{repo}/issues");
     let json = github(&url, "POST", Some(payload), token)?;
     issue_number(&json)
-        .map(|number| format!("https://github.com/{REPO}/issues/{number}"))
+        .map(|number| format!("https://github.com/{repo}/issues/{number}"))
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "GitHub did not return an issue"))
 }
 
-fn comment(number: u64, body: &str, token: &str) -> io::Result<()> {
+fn comment(repo: &str, number: u64, body: &str, token: &str) -> io::Result<()> {
     let payload = format!("{{\"body\":\"{}\"}}", json_escape(body));
-    let url = format!("https://api.github.com/repos/{REPO}/issues/{number}/comments");
+    let url = format!("https://api.github.com/repos/{repo}/issues/{number}/comments");
     github(&url, "POST", Some(payload), token)?;
     Ok(())
 }
@@ -176,8 +215,8 @@ fn json_total(json: &str) -> Option<u64> {
 }
 
 pub fn issue_number(json: &str) -> Option<u64> {
-    let marker = format!("/{REPO}/issues/");
-    let idx = json.find(&marker)?;
+    let marker = "/issues/";
+    let idx = json.find(marker)?;
     let rest = &json[idx + marker.len()..];
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
@@ -215,6 +254,17 @@ fn url_encode(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unset_repo_does_not_start_a_report() {
+        configure("");
+        assert!(configured_repo().is_none());
+        configure("not a repo");
+        assert!(configured_repo().is_none());
+        configure("eidos-agi/bezel");
+        assert_eq!(configured_repo().as_deref(), Some("eidos-agi/bezel"));
+        configure("");
+    }
 
     #[test]
     fn an_issue_url_yields_its_number() {

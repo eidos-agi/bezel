@@ -39,6 +39,18 @@ pub fn listen(port: u16, allow_name: &str, upgrade: bool, settings: &Path) -> io
     if upgrade {
         crate::upgrade::watch();
     }
+    let (width, height, _) = display();
+    crate::status::open(
+        settings,
+        "listen",
+        "left",
+        &[crate::status::Rect {
+            x: 0,
+            y: 0,
+            w: width.round() as i32,
+            h: height.round() as i32,
+        }],
+    );
     let ip = tailscale_ipv4()?;
     let listener = bind_listener(ip, port)?;
     eprintln!("bezel: listening on {ip}:{port} for {allow_name}");
@@ -55,8 +67,11 @@ pub fn listen(port: u16, allow_name: &str, upgrade: bool, settings: &Path) -> io
             continue;
         }
         eprintln!("bezel: connected {}", peer.ip());
+        crate::status::link("connected");
         if let Err(err) = dispatch(stream, settings) {
             eprintln!("bezel: disconnected ({err})");
+            crate::status::link("listening");
+            crate::status::observe("disconnected");
             crate::report::submit(
                 "session-dropped",
                 &format!("The connection closed ({err})."),
@@ -144,6 +159,7 @@ fn session(stream: TcpStream, settings: &Path) -> io::Result<()> {
     let mut last_beat = Instant::now();
     let mut inbox_at = Instant::now();
     let mut greeted = false;
+    let mut told_version = false;
     let mut inbox = Store::attach(crate::inbox::path_for(settings));
     loop {
         match link.recv() {
@@ -163,12 +179,24 @@ fn session(stream: TcpStream, settings: &Path) -> io::Result<()> {
                                 scale_milli: scale,
                                 accepts_config: true,
                                 accepts_inbox: true,
+                                accepts_version: true,
                             })?;
                             greeted = true;
+                            crate::status::link("connected");
                         }
                         Frame::Heartbeat => {}
+                        Frame::PeerRelease { version } if greeted => {
+                            crate::status::peer(&version);
+                            if !told_version {
+                                told_version = true;
+                                link.send(&Frame::PeerRelease {
+                                    version: crate::upgrade::current_version().to_string(),
+                                })?;
+                            }
+                        }
                         Frame::Config { edge } if greeted => {
                             cursor.set_edge(edge);
+                            crate::status::edge(edge.as_str());
                             eprintln!("bezel: edge {}", edge.as_str());
                         }
                         frame @ (Frame::InboxHello { .. } | Frame::Note { .. }) if greeted => {
@@ -186,6 +214,7 @@ fn session(stream: TcpStream, settings: &Path) -> io::Result<()> {
                                 if let Effect::Send(reply) = effect {
                                     link.send(&reply)?;
                                     if matches!(reply, Frame::Leave) {
+                                        crate::status::observe("left");
                                         eprintln!("bezel: left");
                                     }
                                 }

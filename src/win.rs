@@ -101,6 +101,7 @@ struct Session {
     settings_checked: Instant,
     accepts_config: bool,
     accepts_inbox: bool,
+    accepts_version: bool,
     inbox: Store,
 }
 
@@ -112,8 +113,22 @@ pub fn run(
     settings_path: &Path,
     upgrade: bool,
 ) -> io::Result<()> {
+    if host.is_empty() {
+        return Err(io::Error::new(ErrorKind::InvalidInput, "host is unset"));
+    }
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let desk = monitors().unwrap_or_else(|_| crate::desk::darwin_desk());
+    let screens: Vec<crate::status::Rect> = desk
+        .monitors()
+        .iter()
+        .map(|mon| crate::status::Rect {
+            x: mon.x,
+            y: mon.y,
+            w: mon.w,
+            h: mon.h,
+        })
+        .collect();
+    crate::status::open(settings_path, "capture", edge.as_str(), &screens);
     let (tx, rx) = mpsc::channel();
     let settings_mtime = std::fs::metadata(settings_path)
         .and_then(|meta| meta.modified())
@@ -141,6 +156,7 @@ pub fn run(
         settings_checked: Instant::now(),
         accepts_config: false,
         accepts_inbox: false,
+        accepts_version: false,
         inbox: Store::attach(crate::inbox::path_for(settings_path)),
     };
     let window = message_window()?;
@@ -286,15 +302,19 @@ fn dispatch(session: &mut Session, frame: Frame) {
             scale_milli,
             accepts_config,
             accepts_inbox,
+            accepts_version,
         } => {
             eprintln!(
-                "bezel: mac {logical_w}x{logical_h} scale {:.2}",
+                "bezel: peer {logical_w}x{logical_h} scale {:.2}",
                 f64::from(scale_milli) / 1000.0
             );
             session.accepts_config = accepts_config;
             session.accepts_inbox = accepts_inbox;
+            session.accepts_version = accepts_version;
             session.greeted = true;
+            crate::status::link("connected");
             let edge = session.machine.edge();
+            crate::status::edge(edge.as_str());
             eprintln!("bezel: edge {}", edge.as_str());
             if accepts_config {
                 if !try_send(session, &Frame::Config { edge }) {
@@ -302,7 +322,7 @@ fn dispatch(session: &mut Session, frame: Frame) {
                     return;
                 }
             } else {
-                eprintln!("bezel: mac cannot take the edge yet");
+                eprintln!("bezel: peer cannot take the edge yet");
             }
             if accepts_inbox {
                 let hello = session.inbox.greet();
@@ -311,7 +331,17 @@ fn dispatch(session: &mut Session, frame: Frame) {
                     return;
                 }
             }
+            if accepts_version {
+                let version = crate::upgrade::current_version().to_string();
+                if !try_send(session, &Frame::PeerRelease { version }) {
+                    fail_link(session);
+                    return;
+                }
+            }
             enact(session, Event::PeerUp { now });
+        }
+        Frame::PeerRelease { version } => {
+            crate::status::peer(&version);
         }
         Frame::InboxHello { .. } | Frame::Note { .. } => {
             if !session.accepts_inbox {
@@ -341,6 +371,9 @@ fn enact(session: &mut Session, event: Event) {
     for action in actions {
         match action {
             Action::Send(frame) => {
+                if matches!(frame, Frame::Enter { .. }) {
+                    crate::status::observe("enter");
+                }
                 let sent = try_send(session, &frame);
                 if let Frame::Key { hid, down } = &frame {
                     if crate::trace::on() {
@@ -371,6 +404,7 @@ fn enact(session: &mut Session, event: Event) {
                 show_cursor(&mut session.hidden, false);
             }
             Action::Note(word) => {
+                crate::status::observe(word);
                 eprintln!("bezel: {word}");
                 if word == "enter-timeout" {
                     crate::report::submit(
@@ -412,7 +446,9 @@ fn fail_link(session: &mut Session) {
     session.greeted = false;
     session.accepts_config = false;
     session.accepts_inbox = false;
+    session.accepts_version = false;
     session.hello_at = None;
+    crate::status::link("waiting");
     SWALLOW.store(false, Ordering::SeqCst);
     if !was_up {
         return;
@@ -429,7 +465,10 @@ fn fail_link(session: &mut Session) {
                 show_cursor(&mut session.hidden, false);
             }
             Action::HideCursor { .. } => show_cursor(&mut session.hidden, false),
-            Action::Note(word) => eprintln!("bezel: {word}"),
+            Action::Note(word) => {
+                crate::status::observe(word);
+                eprintln!("bezel: {word}");
+            }
             Action::Send(_) => {}
         }
     }
@@ -469,6 +508,10 @@ fn refresh_settings(session: &mut Session) {
         return;
     }
     session.settings_checked = Instant::now();
+    let mut point = POINT::default();
+    if unsafe { GetCursorPos(&mut point) }.is_ok() {
+        crate::status::pointer(point.x, point.y);
+    }
     sync_inbox(session);
     let modified = match std::fs::metadata(&session.settings_path).and_then(|meta| meta.modified()) {
         Ok(modified) => modified,
@@ -489,6 +532,7 @@ fn refresh_settings(session: &mut Session) {
     session.settings_mtime = Some(modified);
     if file.edge != session.machine.edge() {
         session.machine.set_edge(file.edge);
+        crate::status::edge(file.edge.as_str());
         eprintln!("bezel: edge {}", file.edge.as_str());
         if session.greeted && session.accepts_config {
             let edge = file.edge;
@@ -496,7 +540,7 @@ fn refresh_settings(session: &mut Session) {
                 fail_link(session);
             }
         } else if session.greeted {
-            eprintln!("bezel: mac cannot take the edge yet");
+            eprintln!("bezel: peer cannot take the edge yet");
         }
     }
     let previous = session.scaler.scale();

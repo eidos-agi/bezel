@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-26
+
+### Added
+
+- `bezel listen` runs on Linux and injects pointer and keyboard through the desktop portal.
+- `bezel status` prints the running copy's screens, link, edge, peer release, and last cross.
+- `bezel host` prints this machine's MagicDNS name. `bezel install` writes the service and starts it when nothing is running.
+- A new settings file leaves `host` and `allow` empty. `report` names a GitHub repo. An empty `report` files nothing.
+
+### Changed
+
+- Each machine tells the other its release version only after that peer asks. Hello stays one byte.
+
 ## [0.1.11] - 2026-10-22
 
 ### Added

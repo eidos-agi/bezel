@@ -10,6 +10,8 @@ const MAX_BODY: usize = 512;
 pub const MAX_NOTE_TEXT: usize = 320;
 pub const CAP_CONFIG: u8 = 1;
 pub const CAP_INBOX: u8 = 2;
+/// The peer will accept one release-version frame. An old peer leaves this clear.
+pub const CAP_VERSION: u8 = 4;
 
 const HELLO: u8 = 1;
 const HELLO_ACK: u8 = 2;
@@ -25,6 +27,7 @@ const RELEASE: u8 = 11;
 const CONFIG: u8 = 12;
 const NOTE: u8 = 13;
 const INBOX_HELLO: u8 = 14;
+const PEER_RELEASE: u8 = 15;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
@@ -39,6 +42,12 @@ pub enum Frame {
         accepts_config: bool,
         /// The peer can create, read, update, and delete shared messages.
         accepts_inbox: bool,
+        /// The peer accepts one frame that carries this release version.
+        accepts_version: bool,
+    },
+    /// This release, sent only after the peer set [`CAP_VERSION`].
+    PeerRelease {
+        version: String,
     },
     /// One machine tells the other its stable name, then the notes may flow.
     InboxHello {
@@ -132,6 +141,7 @@ pub fn encode(frame: &Frame, out: &mut Vec<u8>) {
             scale_milli,
             accepts_config,
             accepts_inbox,
+            accepts_version,
         } => {
             body.push(HELLO_ACK);
             body.extend_from_slice(&logical_w.to_le_bytes());
@@ -144,9 +154,16 @@ pub fn encode(frame: &Frame, out: &mut Vec<u8>) {
             if *accepts_inbox {
                 caps |= CAP_INBOX;
             }
+            if *accepts_version {
+                caps |= CAP_VERSION;
+            }
             if caps != 0 {
                 body.push(caps);
             }
+        }
+        Frame::PeerRelease { version } => {
+            body.push(PEER_RELEASE);
+            body.extend_from_slice(version.as_bytes());
         }
         Frame::InboxHello { name } => {
             body.push(INBOX_HELLO);
@@ -249,6 +266,19 @@ fn decode_body(body: &[u8]) -> Result<Frame, DecodeError> {
                 scale_milli: u16::from_le_bytes(rest[4..6].try_into().unwrap()),
                 accepts_config: caps & CAP_CONFIG != 0,
                 accepts_inbox: caps & CAP_INBOX != 0,
+                accepts_version: caps & CAP_VERSION != 0,
+            })
+        }
+        PEER_RELEASE => {
+            if rest.is_empty() || rest.len() > 32 {
+                return Err(DecodeError);
+            }
+            let version = std::str::from_utf8(rest).map_err(|_| DecodeError)?;
+            if crate::upgrade::Version::parse(version).is_none() {
+                return Err(DecodeError);
+            }
+            Ok(Frame::PeerRelease {
+                version: version.to_string(),
             })
         }
         INBOX_HELLO => {
@@ -418,6 +448,10 @@ mod tests {
                 scale_milli: 2000,
                 accepts_config: true,
                 accepts_inbox: true,
+                accepts_version: true,
+            },
+            Frame::PeerRelease {
+                version: "0.1.12".into(),
             },
             Frame::InboxHello {
                 name: "Ada West".into(),
@@ -485,8 +519,22 @@ mod tests {
                 scale_milli: 1000,
                 accepts_config: false,
                 accepts_inbox: false,
+                accepts_version: false,
             }
         );
+    }
+
+    #[test]
+    fn a_version_bit_stays_in_the_capability_byte() {
+        match hello_ack_with_caps(CAP_CONFIG | CAP_VERSION) {
+            Frame::HelloAck {
+                accepts_config: true,
+                accepts_inbox: false,
+                accepts_version: true,
+                ..
+            } => {}
+            other => panic!("version bit {other:?}"),
+        }
     }
 
     #[test]

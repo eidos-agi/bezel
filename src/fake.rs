@@ -30,6 +30,7 @@ pub fn answer(frame: Frame, screen: Screen) -> Option<Frame> {
             scale_milli: screen.scale_milli,
             accepts_config: true,
             accepts_inbox: false,
+            accepts_version: false,
         }),
         Frame::Enter { seq, .. } => Some(Frame::EnterAck { seq }),
         Frame::Heartbeat => Some(Frame::Heartbeat),
@@ -111,6 +112,7 @@ fn summarize(frames: &[Frame]) -> String {
             Frame::InboxHello { .. } => "inbox",
             Frame::Note { .. } => "note",
             Frame::HelloAck { .. } | Frame::EnterAck { .. } => "ack",
+            Frame::PeerRelease { .. } => "version",
         };
         if parts.last().copied() != Some(name) {
             parts.push(name);
@@ -159,6 +161,7 @@ mod tests {
                 scale_milli: 2000,
                 accepts_config: true,
                 accepts_inbox: false,
+                accepts_version: false,
             }
         ));
         write_frame(
