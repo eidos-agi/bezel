@@ -414,7 +414,7 @@ fn enact(session: &mut Session, event: Event) {
                 if word == "enter-timeout" {
                     crate::report::submit(
                         "enter-timeout",
-                        "Enter was sent and no EnterAck arrived within 150ms. The pointer stayed here.",
+                        "Enter was sent and no EnterAck arrived while the peer was still up. The pointer stayed here.",
                     );
                 }
             }

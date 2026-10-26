@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-10-26
+
+### Fixed
+
+- A cross waits while the peer is still up, instead of giving up after 150 ms. The listener answers Enter before it warps the pointer, and a given-up cross sends Release so the other machine drops that Enter.
+
 ## [0.1.15] - 2026-10-26
 
 ### Added

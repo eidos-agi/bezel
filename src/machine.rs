@@ -6,9 +6,10 @@ use crate::frame::Frame;
 use crate::hid;
 use std::collections::BTreeSet;
 
-pub const PENDING_MS: u64 = 150;
 pub const HEARTBEAT_MS: u64 = 200;
 pub const MISS_MS: u64 = 600;
+/// Enter waits while the peer is still considered up. A slow warp is not a failed cross.
+pub const PENDING_MS: u64 = MISS_MS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -319,6 +320,8 @@ impl Machine {
             self.mode = Mode::Local;
             self.move_dx = 0;
             self.move_dy = 0;
+            // The listener may already have accepted Enter. Release drops that.
+            actions.push(Action::Send(Frame::Release));
             actions.push(Action::Note("enter-timeout"));
         }
         if self.mode == Mode::Remote && (self.move_dx != 0 || self.move_dy != 0) {
@@ -454,13 +457,37 @@ mod tests {
         );
         assert_eq!(machine.mode(), Mode::Pending);
         assert!(!machine.swallow());
-        machine.handle(Event::Tick { now: 159 }, &desk);
+        let start = 10;
+        machine.handle(Event::Heartbeat { now: start + PENDING_MS - 1 }, &desk);
+        machine.handle(Event::Tick { now: start + PENDING_MS - 1 }, &desk);
         assert_eq!(machine.mode(), Mode::Pending);
-        let actions = machine.handle(Event::Tick { now: 160 }, &desk);
+        let actions = machine.handle(Event::Tick { now: start + PENDING_MS }, &desk);
         assert_eq!(machine.mode(), Mode::Local);
+        assert!(sends(&actions).contains(&Frame::Release));
         assert!(actions
             .iter()
             .any(|action| action == &Action::Note("enter-timeout")));
+    }
+
+    #[test]
+    fn a_slow_ack_still_enters() {
+        let desk = darwin_desk();
+        let mut machine = Machine::new(Edge::Left);
+        machine.handle(Event::PeerUp { now: 0 }, &desk);
+        machine.handle(
+            Event::Pointer {
+                x: -7280,
+                y: 400,
+                dx: -1,
+                dy: 0,
+                now: 10,
+            },
+            &desk,
+        );
+        machine.handle(Event::Tick { now: 160 }, &desk);
+        assert_eq!(machine.mode(), Mode::Pending);
+        machine.handle(Event::EnterAck { seq: 1, now: 410 }, &desk);
+        assert_eq!(machine.mode(), Mode::Remote);
     }
 
     #[test]

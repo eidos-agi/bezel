@@ -49,9 +49,10 @@ impl Cursor {
                 self.active = true;
                 self.x = arrive_x(self.edge, self.w);
                 self.y = map_y(y, span, self.h);
+                // Answer before the warp. A slow portal call must not miss the cross.
                 vec![
-                    Effect::Place { x: self.x, y: self.y },
                     Effect::Send(Frame::EnterAck { seq }),
+                    Effect::Place { x: self.x, y: self.y },
                 ]
             }
             Frame::RelMove { dx, dy } if self.active => self.slide(dx, dy),
@@ -178,11 +179,14 @@ mod tests {
             y: 100,
             span: 1200,
         });
-        assert!(effects.contains(&Effect::Send(Frame::EnterAck { seq: 4 })));
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::Place { x, .. } if (*x - 1798.0).abs() < 0.01
-        )));
+        assert!(matches!(
+            effects.first(),
+            Some(Effect::Send(Frame::EnterAck { seq: 4 }))
+        ));
+        assert!(matches!(
+            effects.get(1),
+            Some(Effect::Place { x, .. }) if (*x - 1798.0).abs() < 0.01
+        ));
     }
 
     #[test]
