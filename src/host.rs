@@ -15,9 +15,11 @@ pub fn print() -> io::Result<()> {
 pub fn dns_name(json: &str) -> Option<String> {
     let self_at = json.find("\"Self\"")?;
     let rest = &json[self_at..];
-    let key = "\"DNSName\":\"";
-    let start = rest.find(key)? + key.len();
-    let tail = &rest[start..];
+    let key = "\"DNSName\"";
+    let at = rest.find(key)? + key.len();
+    let mut tail = rest[at..].trim_start();
+    tail = tail.strip_prefix(':')?.trim_start();
+    tail = tail.strip_prefix('"')?;
     let end = tail.find('"')?;
     let mut name = tail[..end].trim().to_string();
     if name.ends_with('.') {
@@ -82,6 +84,11 @@ mod tests {
         assert_eq!(
             dns_name(json).as_deref(),
             Some("darwin-thinkpad.tail0ffb4a.ts.net")
+        );
+        let pretty = "{\n  \"Self\": {\n    \"DNSName\": \"darwin-dell-xps.tail0ffb4a.ts.net.\"\n  }\n}";
+        assert_eq!(
+            dns_name(pretty).as_deref(),
+            Some("darwin-dell-xps.tail0ffb4a.ts.net")
         );
     }
 }

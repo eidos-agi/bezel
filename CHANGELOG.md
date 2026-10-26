@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-10-26
+
+### Fixed
+
+- `bezel host` reads the MagicDNS name from `tailscale status --json` when the file is pretty-printed.
+
 ## [0.1.12] - 2026-10-26
 
 ### Added

@@ -68,7 +68,7 @@ A listener from before this build has no edge frame. Windows sees that in the he
 
 ## Inbox
 
-`bezel version` prints the release, such as `0.1.12`. `bezel who` prints this machine's stable name. The name is hashed from the operating system id, so the same computer keeps it. `bezel host` prints the MagicDNS name. `bezel status` prints the record the running copy writes beside the settings file: its release, the peer's release once that peer asks for it, whether it is waiting or connected, the edge, the screen rectangles from process start, the last pointer sample, and the last cross. An older running copy leaves `status: missing`.
+`bezel version` prints the release, such as `0.1.13`. `bezel who` prints this machine's stable name. The name is hashed from the operating system id, so the same computer keeps it. `bezel host` prints the MagicDNS name. `bezel status` prints the record the running copy writes beside the settings file: its release, the peer's release once that peer asks for it, whether it is waiting or connected, the edge, the screen rectangles from process start, the last pointer sample, and the last cross. An older running copy leaves `status: missing`.
 
 `bezel doctor` says who is connected, whether a move off the chosen edge could hand the pointer to the other machine, and lists the shared messages. `bezel doctor add`, `update`, and `delete` change those messages. The running bezel sends the change. Doctor does not move the pointer and it does not open a connection. `bezel inbox` is the same message file. While `bezel --to` and `bezel listen` are connected, each side picks up the other's changes. A message records who wrote it and who it is for. An older bezel on the other end never sees these frames.
 
