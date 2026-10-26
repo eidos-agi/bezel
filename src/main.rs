@@ -37,6 +37,7 @@ fn run() -> io::Result<()> {
             bezel::status::show(&path)
         }
         Some("install") => bezel::install::install(),
+        Some("keep") => bezel::install::keep(),
         Some("version") => {
             println!("{}", bezel::upgrade::current_version());
             Ok(())
@@ -365,6 +366,7 @@ bezel who
 bezel host
 bezel status
 bezel install
+bezel keep
 bezel version
 bezel doctor
 bezel doctor add <text>
@@ -384,7 +386,8 @@ Flags override the file until the file is saved again. Windows sends the edge on
 A newer release is printed. bezel upgrade installs it. --no-upgrade stays quiet.
 bezel who prints the stable name of this machine. bezel host prints its MagicDNS name.
 bezel status prints what the running copy last recorded. It does not move the pointer or open a connection.
-bezel install writes the service and starts it when nothing is running. The operating system still asks once.
+bezel install writes the service and starts it when nothing is running. On Windows it also registers a logon task that runs bezel keep. The operating system still asks once.
+bezel keep starts the capture when no bezel is running. A link that stays quiet for 30 seconds is started again. A connected capture is left alone.
 bezel version prints this release.
 bezel doctor says who is connected and whether a move off the chosen edge could hand the pointer over. It does not move the pointer or open the connection.
 bezel doctor add, update, and delete change the shared messages. The running bezel sends them. bezel doctor lists them.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-10-26
+
+### Added
+
+- `bezel keep` starts the Windows capture when it is not running. A link that stays quiet for 30 seconds is started again. A connected capture is left alone. `bezel install` registers that check at logon and every two minutes.
+
 ## [0.1.14] - 2026-10-26
 
 ### Fixed
