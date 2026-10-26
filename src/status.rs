@@ -24,6 +24,8 @@ struct Record {
     entered: String,
     left: String,
     released: String,
+    missed: String,
+    revived: String,
     disconnected: String,
     last_flush: Option<Instant>,
 }
@@ -67,6 +69,8 @@ pub fn open(settings: &Path, role: &str, edge: &str, screens: &[Rect]) {
         entered: "none".to_string(),
         left: "none".to_string(),
         released: "none".to_string(),
+        missed: "none".to_string(),
+        revived: "none".to_string(),
         disconnected: "none".to_string(),
         last_flush: None,
     };
@@ -113,6 +117,8 @@ pub fn observe(word: &str) {
             "entered" => record.entered = when,
             "left" => record.left = when,
             "released" => record.released = when,
+            "missed" => record.missed = when,
+            "revived" => record.revived = when,
             "disconnected" => record.disconnected = when,
             _ => {}
         }
@@ -183,6 +189,8 @@ cross: {cross}
 entered: {entered}
 left: {left}
 released: {released}
+missed: {missed}
+revived: {revived}
 disconnected: {disconnected}
 ",
         release = record.release,
@@ -197,6 +205,8 @@ disconnected: {disconnected}
         entered = record.entered,
         left = record.left,
         released = record.released,
+        missed = record.missed,
+        revived = record.revived,
         disconnected = record.disconnected,
     );
     if record.screens.is_empty() {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-10-26
+
+### Fixed
+
+- A missed heartbeat returns the pointer and marks the link quiet. The next heartbeat on that same socket marks the link connected and the edge arms again. A closed socket still says disconnected and does not revive.
+
 ## [0.1.13] - 2026-10-26
 
 ### Fixed

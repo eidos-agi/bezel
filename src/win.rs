@@ -405,6 +405,11 @@ fn enact(session: &mut Session, event: Event) {
             }
             Action::Note(word) => {
                 crate::status::observe(word);
+                if word == "missed" {
+                    crate::status::link("quiet");
+                } else if word == "revived" {
+                    crate::status::link("connected");
+                }
                 eprintln!("bezel: {word}");
                 if word == "enter-timeout" {
                     crate::report::submit(

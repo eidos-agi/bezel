@@ -89,6 +89,9 @@ pub struct Machine {
     held_keys: BTreeSet<u16>,
     held_buttons: BTreeSet<u8>,
     peer_up: bool,
+    /// A missed heartbeat may revive when the same socket speaks again.
+    /// A real socket close must not.
+    may_revive: bool,
     pending_at: u64,
     last_rx: u64,
     last_beat: u64,
@@ -108,6 +111,7 @@ impl Machine {
             held_keys: BTreeSet::new(),
             held_buttons: BTreeSet::new(),
             peer_up: false,
+            may_revive: false,
             pending_at: 0,
             last_rx: 0,
             last_beat: 0,
@@ -153,14 +157,22 @@ impl Machine {
         match event {
             Event::PeerUp { now } => {
                 self.peer_up = true;
+                self.may_revive = false;
                 self.last_rx = now;
                 self.last_beat = now;
                 Vec::new()
             }
-            Event::PeerDown { now } => self.drop_peer(now),
+            Event::PeerDown { now } => self.drop_peer(now, "disconnected", false),
             Event::Heartbeat { now } => {
+                let revive = self.may_revive && !self.peer_up;
                 self.last_rx = now;
-                Vec::new()
+                if revive {
+                    self.peer_up = true;
+                    self.may_revive = false;
+                    vec![Action::Note("revived")]
+                } else {
+                    Vec::new()
+                }
             }
             Event::EnterAck { seq, now } => self.enter_ack(seq, now),
             Event::Leave { now } => self.give_up(now, "left"),
@@ -300,7 +312,7 @@ impl Machine {
 
     fn tick(&mut self, now: u64) -> Vec<Action> {
         if self.peer_up && now.saturating_sub(self.last_rx) >= MISS_MS {
-            return self.drop_peer(now);
+            return self.drop_peer(now, "missed", true);
         }
         let mut actions = Vec::new();
         if self.mode == Mode::Pending && now.saturating_sub(self.pending_at) >= PENDING_MS {
@@ -324,8 +336,9 @@ impl Machine {
         actions
     }
 
-    fn drop_peer(&mut self, now: u64) -> Vec<Action> {
+    fn drop_peer(&mut self, now: u64, note: &'static str, revive: bool) -> Vec<Action> {
         self.peer_up = false;
+        self.may_revive = revive;
         let mut actions = self.release_held();
         if self.mode == Mode::Remote {
             actions.push(Action::ShowCursor {
@@ -336,7 +349,7 @@ impl Machine {
         self.mode = Mode::Local;
         self.move_dx = 0;
         self.move_dy = 0;
-        actions.push(Action::Note("disconnected"));
+        actions.push(Action::Note(note));
         let _ = now;
         actions
     }
@@ -538,7 +551,86 @@ mod tests {
         assert_eq!(machine.mode(), Mode::Local);
         assert!(actions
             .iter()
+            .any(|action| action == &Action::Note("missed")));
+    }
+
+    #[test]
+    fn late_heartbeat_arms_the_edge_again() {
+        let desk = darwin_desk();
+        let mut machine = Machine::new(Edge::Left);
+        enter(&mut machine);
+        machine.handle(Event::Tick { now: 620 }, &desk);
+        let quiet = machine.handle(
+            Event::Pointer {
+                x: -7280,
+                y: 100,
+                dx: -2,
+                dy: 0,
+                now: 700,
+            },
+            &desk,
+        );
+        assert!(sends(&quiet).is_empty());
+        let revived = machine.handle(Event::Heartbeat { now: 800 }, &desk);
+        assert!(revived
+            .iter()
+            .any(|action| action == &Action::Note("revived")));
+        let again = machine.handle(
+            Event::Pointer {
+                x: -7280,
+                y: 100,
+                dx: -2,
+                dy: 0,
+                now: 810,
+            },
+            &desk,
+        );
+        assert!(matches!(sends(&again).first(), Some(Frame::Enter { .. })));
+    }
+
+    #[test]
+    fn heartbeat_before_hello_does_not_arm() {
+        let desk = darwin_desk();
+        let mut machine = Machine::new(Edge::Left);
+        let beat = machine.handle(Event::Heartbeat { now: 5 }, &desk);
+        assert!(beat.is_empty());
+        let cross = machine.handle(
+            Event::Pointer {
+                x: -7280,
+                y: 100,
+                dx: -2,
+                dy: 0,
+                now: 6,
+            },
+            &desk,
+        );
+        assert!(sends(&cross).is_empty());
+    }
+
+    #[test]
+    fn socket_drop_does_not_revive_on_heartbeat() {
+        let desk = darwin_desk();
+        let mut machine = Machine::new(Edge::Left);
+        enter(&mut machine);
+        let down = machine.handle(Event::PeerDown { now: 40 }, &desk);
+        assert!(down
+            .iter()
             .any(|action| action == &Action::Note("disconnected")));
+        let beat = machine.handle(Event::Heartbeat { now: 50 }, &desk);
+        assert!(beat
+            .iter()
+            .all(|action| action != &Action::Note("revived")));
+        let cross = machine.handle(
+            Event::Pointer {
+                x: -7280,
+                y: 100,
+                dx: -2,
+                dy: 0,
+                now: 60,
+            },
+            &desk,
+        );
+        assert!(sends(&cross).is_empty());
     }
 
     #[test]
